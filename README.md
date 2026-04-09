@@ -101,6 +101,62 @@ When no Claude query is pending, the UI shows a manual query editor. Write SQL, 
 
 Click the **Scripts** button in the header to browse SQL files from the configured scripts directory. The file watcher automatically detects new scripts and highlights them.
 
+## Configuring Claude Code
+
+For Claude to use the tool correctly, add the following rules to your project's `CLAUDE.md` or Claude Code memory:
+
+### Database Rules
+
+```markdown
+- Database is MariaDB/MySQL -- use `CALL` syntax for stored procedures, not `EXEC`
+- For test queries, use `sp_GetSession(0)` as the auth/session parameter
+- Use `i_company = 3` (or your test company ID) for testing
+- All database access in application code must go through stored procedures via SqlHelper
+- Never write direct SQL in application code
+```
+
+### Script Rules
+
+```markdown
+- All database changes (new tables, altered columns, new/modified SPs) must be saved
+  as SQL scripts in the configured scripts directory (e.g. `C:\GIT-WOIZZER\WoizzerDatabase\changes\`)
+- Never modify existing stored procedures in place -- always create a new versioned copy
+  (e.g. `sp_GetShifts` -> `sp_GetShifts2`) and update the application code to call the new version
+- After creating scripts, the SQL Proxy app will automatically detect and highlight them
+```
+
+### Example Memory Entry
+
+If you use Claude Code's auto-memory feature, save a reference like:
+
+```markdown
+---
+name: MCP SQL Proxy for DB queries
+description: Use MCP tool execute_sql for direct SQL queries against the dev DB (MariaDB, CALL syntax for SPs)
+type: reference
+---
+
+For database queries two paths are available:
+
+1. **MCP SQL Proxy** (`mcp__sql-proxy__execute_sql`) -- direct SQL queries against the dev DB
+   - Stored procedures: `CALL sp_Name(...)` (not EXEC)
+   - Auth parameter: `sp_GetSession(0)`
+   - Test company: `i_company = 3`
+   - User approves every query before execution
+
+2. **Database change scripts** -- read SP definitions and change scripts from the scripts directory
+```
+
+### Script Directory Configuration
+
+The scripts directory is configured in `src/electron/main.ts`:
+
+```typescript
+const SCRIPTS_DIR = 'C:\\path\\to\\your\\database\\changes';
+```
+
+Change this path to point to your SQL change scripts directory and rebuild (`npm run build`).
+
 ## Development
 
 ```bash
