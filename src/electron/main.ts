@@ -27,6 +27,7 @@ let scriptsDirOverride: string = '';
 let telegramBot: TelegramBot | null = null;
 let telegramEnabled: boolean = false;
 const pendingTelegramQueries = new Map<string, { id: string; query: string; description?: string }>();
+const telegramMessageIds = new Map<string, { chatId: number; messageId: number }>();
 
 function initTelegram() {
   const token = store.get('telegram.botToken') as string;
@@ -118,9 +119,27 @@ function sendQueryToTelegram(id: string, query: string, description?: string) {
         { text: '❌ Reject', callback_data: `reject:${id}` },
       ]],
     },
+  }).then((msg) => {
+    telegramMessageIds.set(id, { chatId: msg.chat.id, messageId: msg.message_id });
   }).catch((e) => {
     process.stderr.write(`[MCP] Telegram send error: ${e.message}\n`);
   });
+}
+
+function dismissTelegramQuery(queryId: string, statusText: string) {
+  const msgRef = telegramMessageIds.get(queryId);
+  if (!msgRef || !telegramBot) return;
+
+  const pending = pendingTelegramQueries.get(queryId);
+  const queryPreview = pending ? pending.query.substring(0, 100) : '';
+
+  telegramBot.editMessageText(
+    `${statusText}\n\`\`\`sql\n${queryPreview}\n\`\`\``,
+    { chat_id: msgRef.chatId, message_id: msgRef.messageId, parse_mode: 'Markdown' }
+  ).catch(() => {});
+
+  pendingTelegramQueries.delete(queryId);
+  telegramMessageIds.delete(queryId);
 }
 
 function createWindow() {
@@ -273,6 +292,7 @@ ipcMain.on('send-result', (_event, { id, data }) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'result', id, data }));
   }
+  dismissTelegramQuery(id, '✅ Handled in app');
 });
 
 // Send error back to MCP
@@ -280,6 +300,7 @@ ipcMain.on('send-error', (_event, { id, error }) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'error', id, error }));
   }
+  dismissTelegramQuery(id, '⚠️ Error (handled in app)');
 });
 
 // Reject query
@@ -287,6 +308,7 @@ ipcMain.on('reject-query', (_event, { id, reason }) => {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'rejected', id, reason }));
   }
+  dismissTelegramQuery(id, '🚫 Rejected in app');
 });
 
 // DB settings
