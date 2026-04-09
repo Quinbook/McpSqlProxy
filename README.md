@@ -45,8 +45,15 @@ Claude Code  --MCP/stdio-->  MCP Server  --WebSocket-->  Electron UI  --mysql2--
 - Open scripts in your default editor or load into the query editor
 - Auto-switches between Scripts and Query view based on context
 
+**Telegram Remote Control**
+- Approve or reject queries from your phone via Telegram bot
+- Inline buttons: one tap to execute or reject
+- Query runs locally on your machine, only the confirmation is remote
+- Toggle on/off in Settings -- disabled by default
+
 **Other**
 - Resizable sidebars
+- Column masking for sensitive data (e.g. names → "Ma*** ***er")
 - DB connection settings with auto-test on startup
 - MCP connection status indicator
 
@@ -73,6 +80,17 @@ When the sql-proxy MCP is connected, call set_scripts_dir with path "/path/to/yo
 ```
 
 The app remembers the path across restarts. New scripts are detected automatically and highlighted in the Scripts view.
+
+### Telegram Remote Control (optional)
+
+Approve queries from your phone when you're away from your desk.
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) in Telegram
+2. Send `/start` to your new bot
+3. Get your Chat ID by opening `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser
+4. In the app: **Settings** → enter Bot Token + Chat ID, enable the checkbox, click **Save**
+
+When enabled, every query from Claude is also sent to your Telegram chat with Execute/Reject buttons. The query runs locally on your machine -- Telegram is only the confirmation channel.
 
 ## Usage
 
