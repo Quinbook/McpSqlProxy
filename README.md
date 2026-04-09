@@ -75,22 +75,28 @@ Add to your project's `.mcp.json`:
   "mcpServers": {
     "sql-proxy": {
       "command": "node",
-      "args": ["/path/to/McpSqlProxy/dist/mcp/server.js"],
-      "env": {
-        "SCRIPTS_DIR": "/path/to/your/sql/scripts"
-      }
+      "args": ["/path/to/McpSqlProxy/dist/mcp/server.js"]
     }
   }
 }
 ```
-
-The `SCRIPTS_DIR` environment variable tells the app where to find your SQL change scripts. If omitted, you can configure the path manually in the app's Settings panel.
 
 Then connect in Claude Code with `/mcp`.
 
 ### Configure Database
 
 On first launch, the Settings panel opens automatically. Enter your database credentials, click **Test Connection** to verify, then **Save**. Credentials are stored locally via `electron-store`.
+
+### SQL Scripts Directory
+
+The Scripts browser lets you view SQL change scripts from a directory. To enable it, Claude calls the `set_scripts_dir` MCP tool with the path to your scripts folder. Add a memory entry or `CLAUDE.md` instruction so Claude does this automatically at the start of each conversation:
+
+```markdown
+At the start of each conversation, call `set_scripts_dir` with path "/path/to/your/sql/scripts"
+to enable the Scripts browser in the SQL Proxy app.
+```
+
+The app remembers the path for the duration of the MCP session. When Claude creates new script files in that directory, the app detects them automatically, shows a notification, and highlights them in the Scripts view.
 
 ## Usage
 
@@ -142,8 +148,10 @@ description: Use MCP tool execute_sql for direct SQL queries against the dev DB
 type: reference
 ---
 
-Use the MCP SQL Proxy (`mcp__sql-proxy__execute_sql`) for database queries.
-The user reviews and approves every query before execution.
+Use the MCP SQL Proxy for database queries:
+- `execute_sql` — run SQL queries (user approves before execution)
+- `set_scripts_dir` — call at conversation start with the scripts directory path
+
 Save database changes as SQL scripts in the configured scripts directory.
 ```
 
