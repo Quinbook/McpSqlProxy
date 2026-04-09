@@ -14,7 +14,6 @@ const store = new Store({
       password: '',
       database: '',
     },
-    scriptsDir: '',
   },
 });
 
@@ -42,10 +41,9 @@ function createWindow() {
     const status = (ws && ws.readyState === WebSocket.OPEN) ? 'connected' : 'disconnected';
     mainWindow?.webContents.send('mcp-status', status);
 
-    // First launch: open settings if DB user or scripts dir not configured
+    // First launch: open settings if DB user not configured
     const dbConfig = store.get('db') as any;
-    const scriptsDir = store.get('scriptsDir') as string;
-    if (!dbConfig?.user || !scriptsDir) {
+    if (!dbConfig?.user) {
       mainWindow?.webContents.send('open-settings');
     }
   });
@@ -246,12 +244,6 @@ ipcMain.handle('open-script-external', async (_event, filename: string) => {
 });
 
 ipcMain.handle('get-scripts-dir', () => getScriptsDir());
-
-ipcMain.handle('save-scripts-dir', async (_event, dir: string) => {
-  store.set('scriptsDir', dir);
-  initScriptWatcher(); // restart watcher with new dir
-  return true;
-});
 
 ipcMain.on('set-app-icon', (_event, pngDataUrl: string) => {
   try {

@@ -83,11 +83,6 @@
           <input id="db-database" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" />
         </div>
       </div>
-      <h2 class="text-sm font-semibold mb-3 mt-4">SQL Scripts Directory</h2>
-      <div>
-        <label class="text-xs text-gray-400">Path to SQL change scripts folder</label>
-        <input id="scripts-dir" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" placeholder="C:\path\to\your\scripts" />
-      </div>
       <div class="flex gap-2 mt-3">
         <button onclick="saveSettings()" class="text-sm px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded">Save</button>
         <button onclick="testConnection()" class="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded">Test Connection</button>
@@ -352,8 +347,16 @@
       document.getElementById('db-user').value = settings.user || '';
       document.getElementById('db-password').value = settings.password || '';
       document.getElementById('db-database').value = settings.database || '';
+      // Check if scripts dir is configured (via env var)
       const scriptsDir = await window.api.getScriptsDir();
-      document.getElementById('scripts-dir').value = scriptsDir || '';
+      const scriptsBtn = document.getElementById('scripts-btn');
+      if (scriptsDir) {
+        scriptsBtn.disabled = false;
+        scriptsBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+      } else {
+        scriptsBtn.disabled = true;
+        scriptsBtn.classList.add('opacity-40', 'cursor-not-allowed');
+      }
     }
 
     function toggleSettings() {
@@ -382,7 +385,6 @@
         database: document.getElementById('db-database').value,
       };
       await window.api.saveDbSettings(settings);
-      await window.api.saveScriptsDir(document.getElementById('scripts-dir').value.trim());
       updateDbStatus('saved', 'bg-blue-600');
     }
 

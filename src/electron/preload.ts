@@ -25,7 +25,6 @@ contextBridge.exposeInMainWorld('api', {
   readScript: (filename: string) => ipcRenderer.invoke('read-script', filename),
   openScriptExternal: (filename: string) => ipcRenderer.invoke('open-script-external', filename),
   getScriptsDir: () => ipcRenderer.invoke('get-scripts-dir'),
-  saveScriptsDir: (dir: string) => ipcRenderer.invoke('save-scripts-dir', dir),
   onOpenSettings: (callback: () => void) => {
     ipcRenderer.on('open-settings', () => callback());
   },
