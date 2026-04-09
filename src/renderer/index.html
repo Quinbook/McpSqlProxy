@@ -162,6 +162,7 @@
           </div>
           <div class="flex gap-2 px-4 py-2 bg-gray-800 border-b border-gray-700">
             <button onclick="executeManualQuery()" class="px-4 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm font-medium">Execute</button>
+            <button onclick="resetManual()" class="px-4 py-1.5 bg-gray-600 hover:bg-gray-500 rounded text-sm font-medium">Reset</button>
             <span id="manual-query-status" class="text-sm text-gray-400 self-center ml-2"></span>
           </div>
           <!-- Manual Results -->
@@ -748,6 +749,19 @@
 
     // --- Manual Query Mode ---
     let manualResult = null;
+
+    function resetManual() {
+      document.getElementById('manual-query-editor').value = '';
+      document.getElementById('manual-results-area').classList.add('hidden');
+      document.getElementById('manual-error-area').classList.add('hidden');
+      document.getElementById('manual-query-status').textContent = '';
+      manualResult = null;
+      deselectedRows = new Set();
+      editedCells = {};
+      removedColumns = new Set();
+      maskedColumns = new Set();
+      document.getElementById('manual-query-editor').focus();
+    }
 
     async function executeManualQuery() {
       const query = document.getElementById('manual-query-editor').value.trim();
