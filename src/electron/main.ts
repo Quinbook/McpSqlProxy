@@ -12,7 +12,7 @@ const store = new Store({
       port: 3306,
       user: '',
       password: '',
-      database: 'woizzertickets',
+      database: '',
     },
     scriptsDir: '',
   },
@@ -308,7 +308,7 @@ function initScriptWatcher() {
 }
 
 // --- App lifecycle ---
-app.setAppUserModelId('com.woizzer.mcp-sql-proxy');
+app.setAppUserModelId('com.mcpsqlproxy.app');
 
 app.whenReady().then(() => {
   createWindow();

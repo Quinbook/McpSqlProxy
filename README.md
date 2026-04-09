@@ -60,7 +60,7 @@ Claude Code  --MCP/stdio-->  MCP Server  --WebSocket-->  Electron UI  --mysql2--
 ### Install
 
 ```bash
-git clone https://github.com/Quinbook/McpSqlProxy.git
+git clone https://github.com/user/McpSqlProxy.git
 cd McpSqlProxy
 npm install
 npm run build
@@ -75,17 +75,22 @@ Add to your project's `.mcp.json`:
   "mcpServers": {
     "sql-proxy": {
       "command": "node",
-      "args": ["C:\\path\\to\\McpSqlProxy\\dist\\mcp\\server.js"]
+      "args": ["/path/to/McpSqlProxy/dist/mcp/server.js"],
+      "env": {
+        "SCRIPTS_DIR": "/path/to/your/sql/scripts"
+      }
     }
   }
 }
 ```
 
+The `SCRIPTS_DIR` environment variable tells the app where to find your SQL change scripts. If omitted, you can configure the path manually in the app's Settings panel.
+
 Then connect in Claude Code with `/mcp`.
 
 ### Configure Database
 
-On first launch, click **Settings** in the top right corner and enter your database credentials. Click **Test Connection** to verify, then **Save**. Credentials are stored locally via `electron-store`.
+On first launch, the Settings panel opens automatically. Enter your database credentials, click **Test Connection** to verify, then **Save**. Credentials are stored locally via `electron-store`.
 
 ## Usage
 
@@ -122,7 +127,7 @@ Tell Claude which database dialect you use and how queries should be structured:
 If you use the script browser feature, tell Claude where to save change scripts:
 
 ```markdown
-- Save all database change scripts in /path/to/your/scripts/directory/
+- Save all database change scripts in the configured scripts directory
 - The SQL Proxy app will automatically detect and highlight new scripts
 ```
 
@@ -141,16 +146,6 @@ Use the MCP SQL Proxy (`mcp__sql-proxy__execute_sql`) for database queries.
 The user reviews and approves every query before execution.
 Save database changes as SQL scripts in the configured scripts directory.
 ```
-
-### Script Directory Configuration
-
-The scripts directory is configured in `src/electron/main.ts`:
-
-```typescript
-const SCRIPTS_DIR = 'C:\\path\\to\\your\\scripts';
-```
-
-Change this path to your SQL scripts directory and rebuild (`npm run build`).
 
 ## Development
 
