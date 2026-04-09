@@ -209,7 +209,7 @@ ipcMain.handle('test-db-connection', async () => {
 
 // SQL Scripts
 function getScriptsDir(): string {
-  return store.get('scriptsDir') as string || '';
+  return process.env.SCRIPTS_DIR || store.get('scriptsDir') as string || '';
 }
 
 ipcMain.handle('get-scripts', async () => {
