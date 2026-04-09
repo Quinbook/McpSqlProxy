@@ -20,7 +20,17 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .result-table td:hover { white-space: normal; word-break: break-all; }
+    .result-table td:hover { overflow: visible; position: relative; }
+    .result-table td:hover::after {
+      content: attr(title);
+      position: absolute; left: 0; top: 100%; z-index: 10;
+      background: #1f2937; border: 1px solid #4b5563; border-radius: 4px;
+      padding: 4px 8px; white-space: pre-wrap; word-break: break-all;
+      max-width: 400px; font-size: 11px; color: #e5e7eb;
+      pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .result-table td[title=""]:hover::after,
+    .result-table td:not([title]):hover::after { display: none; }
     .resize-handle {
       width: 4px;
       cursor: col-resize;
@@ -650,7 +660,8 @@
           const isEdited = edited !== undefined;
           const displayVal = maskedColumns.has(col) && val !== null ? maskValue(String(val)) : (val === null ? null : String(val));
           const display = displayVal === null ? '<span class="text-gray-600">NULL</span>' : escapeHtml(displayVal);
-          html += `<td class="p-1.5 border border-gray-700/50 cursor-pointer ${isEdited ? 'bg-yellow-900/30' : ''}" ondblclick="editCell('${cellKey}', this)">${display}</td>`;
+          const titleAttr = displayVal !== null && String(displayVal).length > 30 ? `title="${escapeHtml(displayVal).replace(/"/g, '&quot;')}"` : '';
+          html += `<td class="p-1.5 border border-gray-700/50 cursor-pointer ${isEdited ? 'bg-yellow-900/30' : ''}" ${titleAttr} ondblclick="editCell('${cellKey}', this)">${display}</td>`;
         }
         html += '</tr>';
       }
