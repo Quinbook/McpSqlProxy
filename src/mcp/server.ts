@@ -19,6 +19,7 @@ const pendingQueries = new Map<string, PendingQuery>();
 let electronClient: WebSocket | null = null;
 let electronProcess: ReturnType<typeof spawn> | null = null;
 let queryCounter = 0;
+let currentScriptsDir: string = '';
 
 // --- WebSocket Server (Bridge to Electron UI) ---
 const wss = new WebSocketServer({ port: WS_PORT });
@@ -26,6 +27,11 @@ const wss = new WebSocketServer({ port: WS_PORT });
 wss.on('connection', (ws) => {
   electronClient = ws;
   process.stderr.write('[MCP] Electron UI connected\n');
+
+  // Send scripts dir if already set
+  if (currentScriptsDir) {
+    ws.send(JSON.stringify({ type: 'set_scripts_dir', path: currentScriptsDir }));
+  }
 
   // Send any pending queries that arrived before UI connected
   for (const [id, pq] of pendingQueries) {
@@ -153,6 +159,7 @@ server.tool(
     path: z.string().describe('Absolute path to the SQL scripts directory'),
   },
   async ({ path: dirPath }) => {
+    currentScriptsDir = dirPath;
     launchElectron();
 
     if (electronClient && electronClient.readyState === WebSocket.OPEN) {
