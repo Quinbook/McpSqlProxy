@@ -1,0 +1,24 @@
+{
+  "name": "mcp-sql-proxy",
+  "version": "1.0.0",
+  "description": "MCP SQL Proxy - Electron App for manual SQL query approval",
+  "main": "dist/mcp/server.js",
+  "scripts": {
+    "build": "tsc && shx cp src/renderer/index.html dist/renderer/index.html",
+    "start": "npm run build && electron dist/electron/main.js",
+    "mcp": "node dist/mcp/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "electron-store": "^8.2.0",
+    "mysql2": "^3.14.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/ws": "^8.18.1",
+    "electron": "^35.1.2",
+    "shx": "^0.4.0",
+    "typescript": "^5.8.3"
+  }
+}

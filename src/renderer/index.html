@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="de" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MCP SQL Proxy</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Segoe UI', system-ui, sans-serif; }
+    .query-editor {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      tab-size: 4;
+    }
+    .fade-in { animation: fadeIn 0.2s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+    .result-table th, .result-table td {
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .result-table td:hover { white-space: normal; word-break: break-all; }
+    .resize-handle {
+      width: 4px;
+      cursor: col-resize;
+      background: transparent;
+      transition: background 0.15s;
+      flex-shrink: 0;
+    }
+    .resize-handle:hover, .resize-handle.active { background: #3b82f6; }
+    .toast {
+      position: fixed; top: 12px; right: 12px; z-index: 9999;
+      background: #1e40af; color: white; padding: 12px 20px; border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5); font-size: 13px; max-width: 350px;
+      animation: toastIn 0.3s ease-out;
+      cursor: pointer;
+    }
+    .toast .toast-title { font-weight: 600; margin-bottom: 2px; }
+    .toast .toast-body { opacity: 0.85; font-size: 12px; }
+    @keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+    @keyframes toastOut { from { opacity: 1; } to { opacity: 0; transform: translateX(40px); } }
+  </style>
+</head>
+<body class="h-full bg-gray-900 text-gray-100">
+  <div class="h-full flex flex-col">
+    <!-- Header -->
+    <header class="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
+      <div class="flex items-center gap-3">
+        <h1 class="text-lg font-semibold">MCP SQL Proxy</h1>
+        <span id="mcp-status" class="text-xs px-2 py-0.5 rounded-full bg-yellow-600">MCP: connecting...</span>
+        <span id="db-status" class="text-xs px-2 py-0.5 rounded-full bg-gray-600">DB: not tested</span>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="toggleScripts()" id="scripts-btn" class="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded relative">Scripts<span id="scripts-badge" class="hidden absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full text-xs flex items-center justify-center text-white font-bold"></span></button>
+        <button onclick="toggleSettings()" class="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded">Settings</button>
+      </div>
+    </header>
+
+    <!-- Settings Panel (hidden by default) -->
+    <div id="settings-panel" class="hidden bg-gray-800 border-b border-gray-700 p-4 fade-in">
+      <h2 class="text-sm font-semibold mb-3">Database Connection</h2>
+      <div class="grid grid-cols-5 gap-3">
+        <div>
+          <label class="text-xs text-gray-400">Host</label>
+          <input id="db-host" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400">Port</label>
+          <input id="db-port" type="number" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400">User</label>
+          <input id="db-user" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400">Password</label>
+          <input id="db-password" type="password" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400">Database</label>
+          <input id="db-database" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" />
+        </div>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button onclick="saveSettings()" class="text-sm px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded">Save</button>
+        <button onclick="testConnection()" class="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded">Test Connection</button>
+      </div>
+    </div>
+
+    <!-- Scripts Panel (hidden by default) -->
+    <div id="scripts-panel" class="hidden flex-1 flex overflow-hidden bg-gray-900">
+        <!-- Script List -->
+        <div id="scripts-sidebar" class="border-r border-gray-700 flex flex-col overflow-hidden" style="width:280px;min-width:150px;">
+          <div class="p-3 border-b border-gray-700 flex justify-between items-center">
+            <h2 class="text-sm font-semibold text-gray-400">SQL Change Scripts</h2>
+            <button onclick="loadScripts()" class="text-xs px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded">Refresh</button>
+          </div>
+          <div id="scripts-list" class="flex-1 overflow-y-auto p-2 space-y-1 text-xs">
+            <div class="text-gray-500 p-3 text-center">Loading...</div>
+          </div>
+        </div>
+        <div class="resize-handle" id="scripts-resize-handle"></div>
+        <!-- Script Content -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+          <div id="script-header" class="hidden px-4 py-2 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
+            <span id="script-name" class="text-sm font-mono text-blue-300"></span>
+            <div class="flex gap-2">
+              <button onclick="openScriptExternal()" class="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded">Open in Editor</button>
+              <button onclick="loadScriptToManual()" class="text-xs px-2 py-1 bg-purple-700 hover:bg-purple-600 rounded">Load to Query</button>
+            </div>
+          </div>
+          <pre id="script-content" class="flex-1 overflow-auto p-4 text-xs text-green-400 font-mono whitespace-pre-wrap"><span class="text-gray-500">Select a script to view its content</span></pre>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div id="main-content" class="flex-1 flex overflow-hidden">
+      <!-- Query Queue (left sidebar) -->
+      <div id="query-sidebar" class="bg-gray-800 border-r border-gray-700 flex flex-col" style="width:256px;min-width:150px;">
+        <div class="p-3 border-b border-gray-700">
+          <h2 class="text-sm font-semibold text-gray-400">Pending Queries</h2>
+        </div>
+        <div id="query-list" class="flex-1 overflow-y-auto p-2 space-y-1">
+          <div class="text-xs text-gray-500 p-3 text-center">No pending queries</div>
+        </div>
+        <div class="p-3 border-t border-gray-700 flex flex-col min-h-0">
+          <h2 class="text-sm font-semibold text-gray-400 mb-1">History</h2>
+          <div id="history-list" class="flex-1 overflow-y-auto space-y-1 text-xs"></div>
+          <div id="history-detail" class="hidden mt-2 border-t border-gray-600 pt-2">
+            <textarea id="history-query-text" class="w-full bg-gray-900 text-green-400 text-xs font-mono p-2 rounded border border-gray-600 outline-none resize-y" rows="4" readonly></textarea>
+            <div class="flex gap-1 mt-1">
+              <button onclick="copyHistoryQuery()" class="flex-1 text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded">Copy</button>
+              <button onclick="loadHistoryToManual()" class="flex-1 text-xs px-2 py-1 bg-purple-700 hover:bg-purple-600 rounded">Load</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="resize-handle" id="query-resize-handle"></div>
+
+      <!-- Query Detail (main area) -->
+      <div class="flex-1 flex flex-col overflow-hidden">
+        <div id="empty-state" class="flex-1 flex flex-col overflow-hidden">
+          <!-- Manual Query Mode -->
+          <div class="flex-shrink-0 border-b border-gray-700">
+            <div class="px-4 py-1 bg-gray-800 text-xs text-gray-400 flex justify-between">
+              <span>Manual Query</span>
+              <span class="text-gray-600">No pending Claude requests</span>
+            </div>
+            <textarea id="manual-query-editor" class="query-editor w-full bg-gray-900 text-green-400 p-4 outline-none resize-y" rows="6" spellcheck="false" placeholder="SQL Query hier eingeben..."></textarea>
+          </div>
+          <div class="flex gap-2 px-4 py-2 bg-gray-800 border-b border-gray-700">
+            <button onclick="executeManualQuery()" class="px-4 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm font-medium">Execute</button>
+            <span id="manual-query-status" class="text-sm text-gray-400 self-center ml-2"></span>
+          </div>
+          <!-- Manual Results -->
+          <div id="manual-results-area" class="flex-1 overflow-auto hidden">
+            <div class="px-4 py-2 bg-gray-800 border-b border-gray-700 flex justify-between items-center sticky top-0">
+              <span class="text-sm text-gray-400">Results (<span id="manual-result-count">0</span> rows)</span>
+              <div class="flex gap-2">
+                <button onclick="copyForClaude(false)" class="px-3 py-1 bg-purple-600 hover:bg-purple-500 rounded text-sm">Copy for Claude</button>
+                <button onclick="copyForClaude(true)" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm">Copy as Text</button>
+              </div>
+            </div>
+            <div id="manual-results-table-container" class="p-2 overflow-auto"></div>
+          </div>
+          <div id="manual-error-area" class="hidden px-4 py-3 bg-red-900/30 border-t border-red-700">
+            <p class="text-sm text-red-300" id="manual-error-message"></p>
+          </div>
+        </div>
+
+        <div id="query-detail" class="hidden flex-1 flex flex-col overflow-hidden">
+          <!-- Description -->
+          <div id="query-description" class="px-4 py-2 bg-gray-800 border-b border-gray-700 text-sm text-blue-300 hidden"></div>
+
+          <!-- SQL Editor -->
+          <div class="flex-shrink-0 border-b border-gray-700">
+            <div class="px-4 py-1 bg-gray-800 text-xs text-gray-400 flex justify-between">
+              <span>SQL Query (editable)</span>
+              <span id="query-id" class="text-gray-600"></span>
+            </div>
+            <textarea id="query-editor" class="query-editor w-full bg-gray-900 text-green-400 p-4 outline-none resize-y" rows="8" spellcheck="false"></textarea>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="flex gap-2 px-4 py-2 bg-gray-800 border-b border-gray-700">
+            <button onclick="approveCurrentQuery()" class="px-4 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm font-medium">Execute</button>
+            <button onclick="rejectCurrentQuery()" class="px-4 py-1.5 bg-red-600 hover:bg-red-500 rounded text-sm font-medium">Reject</button>
+            <span id="query-status" class="text-sm text-gray-400 self-center ml-2"></span>
+          </div>
+
+          <!-- Results -->
+          <div id="results-area" class="flex-1 overflow-auto hidden">
+            <div class="px-4 py-2 bg-gray-800 border-b border-gray-700 flex justify-between items-center sticky top-0">
+              <span class="text-sm text-gray-400">Results (<span id="result-count">0</span> rows)</span>
+              <div class="flex gap-2">
+                <button onclick="sendResultToClaude()" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-sm">Send to Claude</button>
+                <button onclick="sendResultToClaude(true)" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm">Send as Text</button>
+              </div>
+            </div>
+            <div id="results-table-container" class="p-2 overflow-auto"></div>
+          </div>
+
+          <!-- Error -->
+          <div id="error-area" class="hidden px-4 py-3 bg-red-900/30 border-t border-red-700">
+            <p class="text-sm text-red-300" id="error-message"></p>
+            <div class="flex gap-2 mt-2">
+              <button onclick="sendErrorToClaude()" class="px-3 py-1 bg-red-700 hover:bg-red-600 rounded text-sm">Send Error to Claude</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let queries = [];
+    let currentQuery = null;
+    let currentResult = null;
+    let currentError = null;
+    let history = [];
+    let removedColumns = new Set();
+    let deselectedRows = new Set();  // row indices that are excluded
+    let editedCells = {};            // { "row,col": newValue }
+
+    // --- Scripts ---
+    let scriptsVisible = false;
+    let currentScriptName = null;
+    let newScripts = new Set(); // filenames of newly detected scripts
+
+    function showScripts() {
+      if (scriptsVisible) return;
+      scriptsVisible = true;
+      document.getElementById('scripts-panel').classList.remove('hidden');
+      document.getElementById('main-content').classList.add('hidden');
+      document.getElementById('scripts-btn').classList.add('bg-blue-600');
+      document.getElementById('scripts-btn').classList.remove('bg-gray-700');
+      loadScripts();
+    }
+
+    function hideScripts() {
+      if (!scriptsVisible) return;
+      scriptsVisible = false;
+      document.getElementById('scripts-panel').classList.add('hidden');
+      document.getElementById('main-content').classList.remove('hidden');
+      document.getElementById('scripts-btn').classList.remove('bg-blue-600');
+      document.getElementById('scripts-btn').classList.add('bg-gray-700');
+    }
+
+    function toggleScripts() {
+      if (scriptsVisible) hideScripts(); else showScripts();
+    }
+
+    function updateScriptsBadge() {
+      const badge = document.getElementById('scripts-badge');
+      if (newScripts.size > 0) {
+        badge.textContent = newScripts.size;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+
+    // Listen for new/changed scripts from file watcher
+    let scriptChangedDebounce = null;
+    window.api.onScriptChanged((data) => {
+      if (data.isNew) {
+        newScripts.add(data.name);
+        updateScriptsBadge();
+      }
+      // Debounce: wait 500ms for more changes before switching view and refreshing
+      clearTimeout(scriptChangedDebounce);
+      scriptChangedDebounce = setTimeout(() => {
+        if (newScripts.size > 0 && !scriptsVisible) showScripts();
+        loadScripts().then(() => {
+          // Select first new script if none is currently selected
+          if (newScripts.size > 0 && (!currentScriptName || !newScripts.has(currentScriptName))) {
+            const first = [...newScripts][0];
+            selectScript(first);
+          }
+          // Scroll list to top
+          document.getElementById('scripts-list').scrollTop = 0;
+        });
+      }, 500);
+    });
+
+    async function loadScripts() {
+      const result = await window.api.getScripts();
+      const list = document.getElementById('scripts-list');
+      if (!result.success) {
+        list.innerHTML = `<div class="text-red-400 p-3">${escapeHtml(result.error)}</div>`;
+        return;
+      }
+      if (result.files.length === 0) {
+        list.innerHTML = '<div class="text-gray-500 p-3 text-center">No scripts found</div>';
+        return;
+      }
+      list.innerHTML = result.files.map(f => {
+        const date = new Date(f.modified);
+        const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+        const sizeStr = f.size > 1024 ? `${(f.size/1024).toFixed(1)} KB` : `${f.size} B`;
+        const isSelected = currentScriptName === f.name;
+        const isNew = newScripts.has(f.name);
+        return `<div onclick="selectScript('${escapeHtml(f.name)}')" class="p-2 rounded cursor-pointer hover:bg-gray-700 ${isSelected ? 'bg-gray-700 border border-blue-500' : ''} ${isNew ? 'border-l-2 border-l-green-500' : ''}">
+          <div class="font-mono truncate ${isNew ? 'text-green-300 font-bold' : 'text-gray-300'}">${isNew ? '● ' : ''}${escapeHtml(f.name)}</div>
+          <div class="text-gray-500 mt-0.5">${dateStr} - ${sizeStr}${isNew ? ' <span class="text-green-400">NEW</span>' : ''}</div>
+        </div>`;
+      }).join('');
+    }
+
+    async function selectScript(name) {
+      currentScriptName = name;
+      newScripts.delete(name); // mark as seen
+      updateScriptsBadge();
+      document.getElementById('script-name').textContent = name;
+      document.getElementById('script-header').classList.remove('hidden');
+      document.getElementById('script-content').textContent = 'Loading...';
+      loadScripts(); // refresh selection highlight
+
+      const result = await window.api.readScript(name);
+      if (result.success) {
+        document.getElementById('script-content').textContent = result.content;
+      } else {
+        document.getElementById('script-content').textContent = 'Error: ' + result.error;
+      }
+    }
+
+    function openScriptExternal() {
+      if (currentScriptName) window.api.openScriptExternal(currentScriptName);
+    }
+
+    function loadScriptToManual() {
+      if (!currentScriptName) return;
+      const content = document.getElementById('script-content').textContent;
+      toggleScripts(); // switch back to main view
+      document.getElementById('manual-query-editor').value = content;
+      document.getElementById('manual-query-editor').focus();
+    }
+
+    // --- Settings ---
+    async function loadSettings() {
+      const settings = await window.api.getDbSettings();
+      document.getElementById('db-host').value = settings.host || '';
+      document.getElementById('db-port').value = settings.port || 3306;
+      document.getElementById('db-user').value = settings.user || '';
+      document.getElementById('db-password').value = settings.password || '';
+      document.getElementById('db-database').value = settings.database || '';
+    }
+
+    function toggleSettings() {
+      const panel = document.getElementById('settings-panel');
+      panel.classList.toggle('hidden');
+      if (!panel.classList.contains('hidden')) loadSettings();
+    }
+
+    async function saveSettings() {
+      const settings = {
+        host: document.getElementById('db-host').value,
+        port: parseInt(document.getElementById('db-port').value) || 3306,
+        user: document.getElementById('db-user').value,
+        password: document.getElementById('db-password').value,
+        database: document.getElementById('db-database').value,
+      };
+      await window.api.saveDbSettings(settings);
+      updateDbStatus('saved', 'bg-blue-600');
+    }
+
+    async function testConnection() {
+      updateDbStatus('testing...', 'bg-yellow-600');
+      const result = await window.api.testDbConnection();
+      if (result.success) {
+        updateDbStatus('connected', 'bg-green-600');
+      } else {
+        updateDbStatus('error: ' + result.error, 'bg-red-600');
+      }
+    }
+
+    function updateDbStatus(text, cls) {
+      const el = document.getElementById('db-status');
+      el.textContent = 'DB: ' + text;
+      el.className = 'text-xs px-2 py-0.5 rounded-full ' + cls;
+    }
+
+    // --- Query Handling ---
+    window.api.onNewQuery((query) => {
+      // Auto-switch back to query view if scripts panel is open
+      if (scriptsVisible) hideScripts();
+      queries.push(query);
+      renderQueryList();
+      if (!currentQuery) selectQuery(query.id);
+    });
+
+    window.api.onMcpStatus((status) => {
+      const el = document.getElementById('mcp-status');
+      if (status === 'connected') {
+        el.textContent = 'MCP: connected';
+        el.className = 'text-xs px-2 py-0.5 rounded-full bg-green-600';
+      } else {
+        el.textContent = 'MCP: disconnected';
+        el.className = 'text-xs px-2 py-0.5 rounded-full bg-red-600';
+      }
+    });
+
+    function renderQueryList() {
+      const list = document.getElementById('query-list');
+      if (queries.length === 0) {
+        list.innerHTML = '<div class="text-xs text-gray-500 p-3 text-center">No pending queries</div>';
+        return;
+      }
+      list.innerHTML = queries.map(q => `
+        <div onclick="selectQuery('${q.id}')"
+             class="p-2 rounded cursor-pointer text-xs hover:bg-gray-700 ${currentQuery?.id === q.id ? 'bg-gray-700 border border-blue-500' : 'bg-gray-750'}">
+          <div class="text-gray-300 truncate font-mono">${escapeHtml(q.query.substring(0, 60))}...</div>
+          ${q.description ? `<div class="text-gray-500 mt-0.5 truncate">${escapeHtml(q.description)}</div>` : ''}
+        </div>
+      `).join('');
+    }
+
+    function selectQuery(id) {
+      currentQuery = queries.find(q => q.id === id);
+      currentResult = null;
+      currentError = null;
+      removedColumns = new Set();
+      deselectedRows = new Set();
+      editedCells = {};
+
+      if (!currentQuery) return;
+
+      document.getElementById('empty-state').classList.add('hidden');
+      document.getElementById('query-detail').classList.remove('hidden');
+      document.getElementById('results-area').classList.add('hidden');
+      document.getElementById('error-area').classList.add('hidden');
+      document.getElementById('query-status').textContent = '';
+
+      manualResult = null; // exit manual mode
+      document.getElementById('query-editor').value = currentQuery.query;
+      document.getElementById('query-id').textContent = currentQuery.id;
+
+      const descEl = document.getElementById('query-description');
+      if (currentQuery.description) {
+        descEl.textContent = currentQuery.description;
+        descEl.classList.remove('hidden');
+      } else {
+        descEl.classList.add('hidden');
+      }
+
+      renderQueryList();
+    }
+
+    async function approveCurrentQuery() {
+      if (!currentQuery) return;
+
+      const query = document.getElementById('query-editor').value;
+      document.getElementById('query-status').textContent = 'Executing...';
+
+      const result = await window.api.approveQuery(currentQuery.id, query);
+
+      if (result.success) {
+        currentResult = result.data;
+        currentError = null;
+        renderResults();
+        document.getElementById('query-status').textContent = 'Done - review results before sending';
+      } else {
+        currentError = result.error;
+        currentResult = null;
+        document.getElementById('error-area').classList.remove('hidden');
+        document.getElementById('error-message').textContent = result.error;
+        document.getElementById('query-status').textContent = 'Error';
+      }
+    }
+
+    function rejectCurrentQuery() {
+      if (!currentQuery) return;
+      window.api.rejectQuery(currentQuery.id, 'Rejected by user');
+      addToHistory(currentQuery, 'rejected');
+      removeCurrentFromQueue();
+    }
+
+    function applyEditsAndFilters(rows, prefix) {
+      const pfx = prefix || '';
+      return rows
+        .filter((_, i) => !deselectedRows.has(`${pfx}${i}`))
+        .map((row, origIdx) => {
+          // Find original index (before filter) to match editedCells keys
+          let realIdx = -1, count = -1;
+          for (let j = 0; j < rows.length; j++) {
+            if (!deselectedRows.has(`${pfx}${j}`)) count++;
+            if (count === origIdx) { realIdx = j; break; }
+          }
+          const filtered = {};
+          for (const [key, val] of Object.entries(row)) {
+            if (removedColumns.has(key)) continue;
+            const cellKey = `${pfx}${realIdx},${key}`;
+            filtered[key] = formatValue(editedCells[cellKey] !== undefined ? editedCells[cellKey] : val);
+          }
+          return filtered;
+        });
+    }
+
+    function sendResultToClaude(asText = false) {
+      if (!currentQuery || !currentResult) return;
+
+      let dataToSend;
+
+      if (currentResult._multipleResultSets) {
+        const resultSets = currentResult.resultSets.map((rs, idx) => applyEditsAndFilters(rs, `${idx}_`));
+        if (asText) {
+          dataToSend = resultSets.map((rs, i) => `--- Result Set ${i + 1} ---\n${formatAsTextTable(rs)}`).join('\n\n');
+        } else {
+          dataToSend = resultSets.length === 1 ? resultSets[0] : { _multipleResultSets: true, resultSets };
+        }
+      } else {
+        const data = Array.isArray(currentResult) ? currentResult : [currentResult];
+        const filtered = applyEditsAndFilters(data, '');
+        dataToSend = asText ? formatAsTextTable(filtered) : filtered;
+      }
+
+      window.api.sendResult(currentQuery.id, dataToSend);
+      addToHistory(currentQuery, 'sent');
+      removeCurrentFromQueue();
+    }
+
+    function sendErrorToClaude() {
+      if (!currentQuery || !currentError) return;
+      window.api.sendError(currentQuery.id, currentError);
+      addToHistory(currentQuery, 'error');
+      removeCurrentFromQueue();
+    }
+
+    function removeCurrentFromQueue() {
+      queries = queries.filter(q => q.id !== currentQuery.id);
+      currentQuery = null;
+      currentResult = null;
+      currentError = null;
+
+      if (queries.length > 0) {
+        selectQuery(queries[0].id);
+      } else {
+        document.getElementById('empty-state').classList.remove('hidden');
+        document.getElementById('query-detail').classList.add('hidden');
+        renderQueryList();
+      }
+    }
+
+    // --- Results Table ---
+    function renderResults() {
+      if (!currentResult) return;
+
+      const area = document.getElementById('results-area');
+      const container = document.getElementById('results-table-container');
+      area.classList.remove('hidden');
+
+      // Handle multiple result sets
+      if (currentResult._multipleResultSets) {
+        let totalRows = 0;
+        let html = '';
+        currentResult.resultSets.forEach((rs, idx) => {
+          totalRows += rs.length;
+          html += `<div class="mb-4"><div class="text-sm text-blue-300 px-2 py-1 bg-gray-800 rounded-t border border-gray-700">Result Set ${idx + 1} (${rs.length} rows)</div>`;
+          html += renderTable(rs, idx);
+          html += '</div>';
+        });
+        document.getElementById('result-count').textContent = totalRows;
+        container.innerHTML = html;
+        return;
+      }
+
+      const data = Array.isArray(currentResult) ? currentResult : [currentResult];
+      document.getElementById('result-count').textContent = data.length;
+
+      if (data.length === 0) {
+        container.innerHTML = '<div class="text-gray-500 text-sm p-4">No rows returned</div>';
+        return;
+      }
+
+      container.innerHTML = renderTable(data);
+    }
+
+    function renderTable(data, rsIndex) {
+      if (!data || data.length === 0) return '<div class="text-gray-500 text-sm p-4">No rows</div>';
+
+      const prefix = rsIndex !== undefined ? `${rsIndex}_` : '';
+      const columns = Object.keys(data[0]).filter(c => !removedColumns.has(c));
+      const allSelected = data.every((_, i) => !deselectedRows.has(`${prefix}${i}`));
+
+      let html = '<table class="result-table w-full text-xs border-collapse">';
+      html += '<thead><tr>';
+      html += `<th class="p-1.5 bg-gray-800 border border-gray-700 text-center w-8">
+        <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="toggleAllRows('${prefix}', ${data.length}, this.checked)" title="Select/Deselect all" />
+      </th>`;
+      for (const col of columns) {
+        html += `<th class="text-left p-1.5 bg-gray-800 border border-gray-700 text-gray-400 sticky top-0">
+          ${escapeHtml(col)}
+          <button onclick="removeColumn('${escapeHtml(col)}')" class="ml-1 text-red-400 hover:text-red-300" title="Remove column">x</button>
+        </th>`;
+      }
+      html += '</tr></thead><tbody>';
+
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        const rowKey = `${prefix}${i}`;
+        const isDeselected = deselectedRows.has(rowKey);
+        html += `<tr class="hover:bg-gray-800/50 ${isDeselected ? 'opacity-30' : ''}">`;
+        html += `<td class="p-1.5 border border-gray-700/50 text-center">
+          <input type="checkbox" ${!isDeselected ? 'checked' : ''} onchange="toggleRow('${rowKey}')" />
+        </td>`;
+        for (const col of columns) {
+          const cellKey = `${rowKey},${col}`;
+          const edited = editedCells[cellKey];
+          const rawVal = edited !== undefined ? edited : row[col];
+          const val = formatValue(rawVal);
+          const isEdited = edited !== undefined;
+          const display = val === null ? '<span class="text-gray-600">NULL</span>' : escapeHtml(String(val));
+          html += `<td class="p-1.5 border border-gray-700/50 cursor-pointer ${isEdited ? 'bg-yellow-900/30' : ''}" ondblclick="editCell('${cellKey}', this)">${display}</td>`;
+        }
+        html += '</tr>';
+      }
+
+      html += '</tbody></table>';
+      return html;
+    }
+
+    function toggleRow(rowKey) {
+      if (deselectedRows.has(rowKey)) {
+        deselectedRows.delete(rowKey);
+      } else {
+        deselectedRows.add(rowKey);
+      }
+      renderResults();
+    }
+
+    function toggleAllRows(prefix, count, checked) {
+      for (let i = 0; i < count; i++) {
+        const key = `${prefix}${i}`;
+        if (checked) {
+          deselectedRows.delete(key);
+        } else {
+          deselectedRows.add(key);
+        }
+      }
+      renderResults();
+    }
+
+    function editCell(cellKey, td) {
+      const currentVal = td.textContent.trim();
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = currentVal === 'NULL' ? '' : currentVal;
+      input.className = 'w-full bg-gray-700 text-white text-xs px-1 py-0.5 outline-none border border-blue-500 rounded';
+
+      const finish = () => {
+        const newVal = input.value;
+        if (newVal === '') {
+          editedCells[cellKey] = null;
+        } else if (newVal !== currentVal) {
+          editedCells[cellKey] = newVal;
+        }
+        renderResults();
+      };
+
+      input.addEventListener('blur', finish);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(); }
+        if (e.key === 'Escape') { input.removeEventListener('blur', finish); renderResults(); }
+      });
+
+      td.textContent = '';
+      td.appendChild(input);
+      input.focus();
+      input.select();
+    }
+
+    function removeColumn(col) {
+      removedColumns.add(col);
+      if (manualResult) renderManualResults();
+      else renderResults();
+    }
+
+    // --- Manual Query Mode ---
+    let manualResult = null;
+
+    async function executeManualQuery() {
+      const query = document.getElementById('manual-query-editor').value.trim();
+      if (!query) return;
+
+      document.getElementById('manual-query-status').textContent = 'Executing...';
+      document.getElementById('manual-results-area').classList.add('hidden');
+      document.getElementById('manual-error-area').classList.add('hidden');
+      deselectedRows = new Set();
+      editedCells = {};
+      removedColumns = new Set();
+
+      const result = await window.api.approveQuery('manual', query);
+
+      if (result.success) {
+        manualResult = result.data;
+        renderManualResults();
+        document.getElementById('manual-query-status').textContent = 'Done';
+        addToHistory({ query }, 'manual');
+      } else {
+        manualResult = null;
+        document.getElementById('manual-error-area').classList.remove('hidden');
+        document.getElementById('manual-error-message').textContent = result.error;
+        document.getElementById('manual-query-status').textContent = 'Error';
+        addToHistory({ query }, 'error');
+      }
+    }
+
+    function renderManualResults() {
+      if (!manualResult) return;
+
+      const area = document.getElementById('manual-results-area');
+      const container = document.getElementById('manual-results-table-container');
+      area.classList.remove('hidden');
+
+      if (manualResult._multipleResultSets) {
+        let totalRows = 0;
+        let html = '';
+        manualResult.resultSets.forEach((rs, idx) => {
+          totalRows += rs.length;
+          html += `<div class="mb-4"><div class="text-sm text-blue-300 px-2 py-1 bg-gray-800 rounded-t border border-gray-700">Result Set ${idx + 1} (${rs.length} rows)</div>`;
+          html += renderTable(rs, idx);
+          html += '</div>';
+        });
+        document.getElementById('manual-result-count').textContent = totalRows;
+        container.innerHTML = html;
+        return;
+      }
+
+      const data = Array.isArray(manualResult) ? manualResult : [manualResult];
+      document.getElementById('manual-result-count').textContent = data.length;
+
+      if (data.length === 0) {
+        container.innerHTML = '<div class="text-gray-500 text-sm p-4">No rows returned</div>';
+        return;
+      }
+
+      container.innerHTML = renderTable(data);
+    }
+
+    function copyForClaude(asText = false) {
+      if (!manualResult) return;
+
+      const query = document.getElementById('manual-query-editor').value.trim();
+      let dataToSend;
+
+      if (manualResult._multipleResultSets) {
+        const resultSets = manualResult.resultSets.map((rs, idx) => applyEditsAndFilters(rs, `${idx}_`));
+        if (asText) {
+          dataToSend = resultSets.map((rs, i) => `--- Result Set ${i + 1} ---\n${formatAsTextTable(rs)}`).join('\n\n');
+        } else {
+          dataToSend = JSON.stringify(resultSets.length === 1 ? resultSets[0] : resultSets, null, 2);
+        }
+      } else {
+        const data = Array.isArray(manualResult) ? manualResult : [manualResult];
+        const filtered = applyEditsAndFilters(data, '');
+        dataToSend = asText ? formatAsTextTable(filtered) : JSON.stringify(filtered, null, 2);
+      }
+
+      const clipText = `SQL Query:\n\`\`\`sql\n${query}\n\`\`\`\n\nResult:\n\`\`\`\n${dataToSend}\n\`\`\``;
+      navigator.clipboard.writeText(clipText);
+      document.getElementById('manual-query-status').textContent = 'Copied to clipboard!';
+      setTimeout(() => { document.getElementById('manual-query-status').textContent = 'Done'; }, 2000);
+    }
+
+    // --- History ---
+    let selectedHistoryIndex = -1;
+
+    function addToHistory(query, status) {
+      history.unshift({ query: query.query, status, time: new Date().toLocaleTimeString() });
+      if (history.length > 50) history.pop();
+      selectedHistoryIndex = -1;
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const list = document.getElementById('history-list');
+      list.innerHTML = history.map((h, idx) => {
+        const color = h.status === 'sent' ? 'text-green-400' : h.status === 'rejected' ? 'text-red-400' : 'text-yellow-400';
+        const isSelected = idx === selectedHistoryIndex;
+        return `<div class="p-1 cursor-pointer rounded hover:bg-gray-700 ${isSelected ? 'bg-gray-700 border border-gray-600' : ''}" onclick="selectHistory(${idx})">
+          <span class="${color}">[${h.status}]</span> <span class="text-gray-500">${h.time}</span>
+          <div class="text-gray-400 font-mono truncate">${escapeHtml(h.query.substring(0, 80))}</div>
+        </div>`;
+      }).join('');
+
+      // Show detail panel
+      const detail = document.getElementById('history-detail');
+      if (selectedHistoryIndex >= 0 && history[selectedHistoryIndex]) {
+        const h = history[selectedHistoryIndex];
+        document.getElementById('history-query-text').value = h.query;
+        detail.classList.remove('hidden');
+      } else {
+        detail.classList.add('hidden');
+      }
+    }
+
+    function selectHistory(idx) {
+      selectedHistoryIndex = selectedHistoryIndex === idx ? -1 : idx;
+      renderHistory();
+    }
+
+    function copyHistoryQuery() {
+      const text = document.getElementById('history-query-text');
+      text.select();
+      navigator.clipboard.writeText(text.value);
+    }
+
+    function loadHistoryToManual() {
+      if (selectedHistoryIndex < 0 || !history[selectedHistoryIndex]) return;
+      const q = history[selectedHistoryIndex].query;
+      // Switch to manual mode if a Claude query is active
+      if (currentQuery) {
+        currentQuery = null;
+        document.getElementById('query-detail').classList.add('hidden');
+        document.getElementById('empty-state').classList.remove('hidden');
+      }
+      document.getElementById('manual-query-editor').value = q;
+      document.getElementById('manual-query-editor').focus();
+    }
+
+    // --- Helpers ---
+    const isoDateRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+    function formatValue(val) {
+      if (val === null || val === undefined) return null;
+      if (typeof val === 'string' && isoDateRegex.test(val)) {
+        const d = new Date(val);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      }
+      return val;
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    function formatAsTextTable(data) {
+      if (!Array.isArray(data) || data.length === 0) return 'No results';
+      const cols = Object.keys(data[0]);
+      const widths = cols.map(c => Math.max(c.length, ...data.map(r => String(r[c] ?? 'NULL').length).slice(0, 100)));
+      const header = cols.map((c, i) => c.padEnd(widths[i])).join(' | ');
+      const sep = widths.map(w => '-'.repeat(w)).join('-+-');
+      const rows = data.map(r => cols.map((c, i) => String(r[c] ?? 'NULL').padEnd(widths[i])).join(' | '));
+      return [header, sep, ...rows].join('\n');
+    }
+
+    // --- Resizable Sidebars ---
+    function initResize(handleId, sidebarId) {
+      const handle = document.getElementById(handleId);
+      const sidebar = document.getElementById(sidebarId);
+      if (!handle || !sidebar) return;
+
+      let startX, startW;
+      handle.addEventListener('mousedown', (e) => {
+        startX = e.clientX;
+        startW = sidebar.offsetWidth;
+        handle.classList.add('active');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+
+        const onMove = (e) => {
+          const w = startW + (e.clientX - startX);
+          sidebar.style.width = Math.max(150, Math.min(w, 600)) + 'px';
+        };
+        const onUp = () => {
+          handle.classList.remove('active');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    }
+
+    // --- Notifications ---
+    function showToast(title, body) {
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.innerHTML = `<div class="toast-title">${escapeHtml(title)}</div><div class="toast-body">${escapeHtml(body)}</div>`;
+      toast.onclick = () => toast.remove();
+      document.body.appendChild(toast);
+      // Auto-remove after 5s
+      setTimeout(() => {
+        if (toast.parentNode) {
+          toast.style.animation = 'toastOut 0.3s ease-in forwards';
+          setTimeout(() => toast.remove(), 300);
+        }
+      }, 5000);
+    }
+
+    window.api.onShowNotification((data) => {
+      // In-app toast (always works)
+      showToast(data.title, data.body);
+      // Also try OS notification
+      if (Notification.permission === 'granted') {
+        new Notification(data.title, { body: data.body });
+      }
+    });
+
+    // --- Init ---
+    loadSettings();
+    testConnection(); // auto-test DB on startup
+    initResize('query-resize-handle', 'query-sidebar');
+    initResize('scripts-resize-handle', 'scripts-sidebar');
+    // Request notification permission on startup
+    if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+  </script>
+</body>
+</html>
