@@ -146,6 +146,25 @@ server.tool(
   }
 );
 
+server.tool(
+  'set_scripts_dir',
+  'Sets the directory where SQL change scripts are stored. The UI will enable the Scripts browser and watch for new files. Call this once at the start of a conversation if you know the scripts path.',
+  {
+    path: z.string().describe('Absolute path to the SQL scripts directory'),
+  },
+  async ({ path: dirPath }) => {
+    launchElectron();
+
+    if (electronClient && electronClient.readyState === WebSocket.OPEN) {
+      electronClient.send(JSON.stringify({ type: 'set_scripts_dir', path: dirPath }));
+    }
+
+    return {
+      content: [{ type: 'text', text: `Scripts directory set: ${dirPath}` }],
+    };
+  }
+);
+
 // --- Start ---
 async function main() {
   const transport = new StdioServerTransport();

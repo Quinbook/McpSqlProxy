@@ -20,6 +20,7 @@ const store = new Store({
 let mainWindow: BrowserWindow | null = null;
 let ws: WebSocket | null = null;
 let dbConnection: mysql.Connection | null = null;
+let scriptsDirOverride: string = '';
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -111,7 +112,11 @@ function connectToMcp() {
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(data.toString());
-      if (msg.type === 'query') {
+      if (msg.type === 'set_scripts_dir') {
+        scriptsDirOverride = msg.path || '';
+        mainWindow?.webContents.send('scripts-dir-changed', scriptsDirOverride);
+        initScriptWatcher();
+      } else if (msg.type === 'query') {
         // Forward to renderer
         mainWindow?.webContents.send('new-query', {
           id: msg.id,
@@ -207,7 +212,7 @@ ipcMain.handle('test-db-connection', async () => {
 
 // SQL Scripts
 function getScriptsDir(): string {
-  return process.env.SCRIPTS_DIR || store.get('scriptsDir') as string || '';
+  return scriptsDirOverride || process.env.SCRIPTS_DIR || '';
 }
 
 ipcMain.handle('get-scripts', async () => {

@@ -263,6 +263,15 @@
       }
     }
 
+    // Enable scripts button when dir is set via MCP
+    window.api.onScriptsDirChanged((dir) => {
+      const btn = document.getElementById('scripts-btn');
+      if (dir) {
+        btn.disabled = false;
+        btn.classList.remove('opacity-40', 'cursor-not-allowed');
+      }
+    });
+
     // Listen for new/changed scripts from file watcher
     let scriptChangedDebounce = null;
     window.api.onScriptChanged((data) => {

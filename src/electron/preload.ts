@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld('api', {
   onScriptChanged: (callback: (data: any) => void) => {
     ipcRenderer.on('script-changed', (_event, data) => callback(data));
   },
+  onScriptsDirChanged: (callback: (dir: string) => void) => {
+    ipcRenderer.on('scripts-dir-changed', (_event, dir) => callback(dir));
+  },
   onShowNotification: (callback: (data: any) => void) => {
     ipcRenderer.on('show-notification', (_event, data) => callback(data));
   },
