@@ -4,7 +4,7 @@
   "description": "MCP SQL Proxy - Electron App for manual SQL query approval",
   "main": "dist/mcp/server.js",
   "scripts": {
-    "build": "tsc && shx cp src/renderer/index.html dist/renderer/index.html",
+    "build": "tsc && shx cp src/renderer/index.html dist/renderer/index.html && shx cp src/renderer/icon.svg dist/renderer/icon.svg",
     "start": "npm run build && electron dist/electron/main.js",
     "mcp": "node dist/mcp/server.js"
   },
