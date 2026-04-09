@@ -308,7 +308,7 @@ function initScriptWatcher() {
 }
 
 // --- App lifecycle ---
-app.setAppUserModelId('com.mcpsqlproxy.app');
+app.setAppUserModelId('com.woizzer.mcp-sql-proxy');
 
 app.whenReady().then(() => {
   createWindow();
