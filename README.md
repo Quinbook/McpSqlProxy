@@ -60,7 +60,7 @@ Claude Code  --MCP/stdio-->  MCP Server  --WebSocket-->  Electron UI  --mysql2--
 ### Install
 
 ```bash
-git clone https://github.com/user/McpSqlProxy.git
+git clone https://github.com/Quinbook/McpSqlProxy.git
 cd McpSqlProxy
 npm install
 npm run build
