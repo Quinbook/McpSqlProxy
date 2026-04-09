@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import WebSocket from 'ws';
 import * as mysql from 'mysql2/promise';
 import Store from 'electron-store';
+import TelegramBot from 'node-telegram-bot-api';
 
 const store = new Store({
   defaults: {
@@ -21,6 +22,106 @@ let mainWindow: BrowserWindow | null = null;
 let ws: WebSocket | null = null;
 let dbConnection: mysql.Connection | null = null;
 let scriptsDirOverride: string = '';
+
+// --- Telegram Bot ---
+let telegramBot: TelegramBot | null = null;
+let telegramEnabled: boolean = false;
+const pendingTelegramQueries = new Map<string, { id: string; query: string; description?: string }>();
+
+function initTelegram() {
+  const token = store.get('telegram.botToken') as string;
+  const chatId = store.get('telegram.chatId') as string;
+  telegramEnabled = (store.get('telegram.enabled') as boolean) || false;
+
+  if (telegramBot) {
+    telegramBot.stopPolling();
+    telegramBot = null;
+  }
+
+  if (!token || !chatId || !telegramEnabled) return;
+
+  try {
+    telegramBot = new TelegramBot(token, { polling: true });
+
+    telegramBot.on('callback_query', async (callbackQuery) => {
+      const data = callbackQuery.data;
+      if (!data) return;
+
+      const [action, queryId] = data.split(':');
+      const pending = pendingTelegramQueries.get(queryId);
+      if (!pending) {
+        telegramBot?.answerCallbackQuery(callbackQuery.id, { text: 'Query not found or already handled' });
+        return;
+      }
+
+      if (action === 'approve') {
+        telegramBot?.answerCallbackQuery(callbackQuery.id, { text: 'Executing...' });
+        try {
+          const result = await executeQuery(pending.query);
+          // Send result back to MCP
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const resultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+            ws.send(JSON.stringify({ type: 'result', id: pending.id, data: result }));
+          }
+          // Update Telegram message
+          const preview = JSON.stringify(result).substring(0, 200);
+          telegramBot?.editMessageText(
+            `✅ *Executed*\n\`\`\`sql\n${pending.query}\n\`\`\`\nResult: \`${preview}...\``,
+            { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id, parse_mode: 'Markdown' }
+          ).catch(() => {});
+          // Remove from Electron UI pending list
+          mainWindow?.webContents.send('query-handled-remotely', pending.id);
+        } catch (e: any) {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'error', id: pending.id, error: e.message }));
+          }
+          telegramBot?.editMessageText(
+            `❌ *Error*\n\`\`\`sql\n${pending.query}\n\`\`\`\nError: ${e.message}`,
+            { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id, parse_mode: 'Markdown' }
+          ).catch(() => {});
+        }
+      } else if (action === 'reject') {
+        telegramBot?.answerCallbackQuery(callbackQuery.id, { text: 'Rejected' });
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'rejected', id: pending.id, reason: 'Rejected via Telegram' }));
+        }
+        telegramBot?.editMessageText(
+          `🚫 *Rejected*\n\`\`\`sql\n${pending.query}\n\`\`\``,
+          { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id, parse_mode: 'Markdown' }
+        ).catch(() => {});
+        mainWindow?.webContents.send('query-handled-remotely', pending.id);
+      }
+
+      pendingTelegramQueries.delete(queryId);
+    });
+
+    process.stderr.write('[MCP] Telegram bot started\n');
+  } catch (e: any) {
+    process.stderr.write(`[MCP] Telegram bot error: ${e.message}\n`);
+  }
+}
+
+function sendQueryToTelegram(id: string, query: string, description?: string) {
+  if (!telegramBot || !telegramEnabled) return;
+  const chatId = store.get('telegram.chatId') as string;
+  if (!chatId) return;
+
+  pendingTelegramQueries.set(id, { id, query, description });
+
+  const text = `🔍 *New SQL Query*${description ? `\n_${description}_` : ''}\n\`\`\`sql\n${query}\n\`\`\``;
+
+  telegramBot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Execute', callback_data: `approve:${id}` },
+        { text: '❌ Reject', callback_data: `reject:${id}` },
+      ]],
+    },
+  }).catch((e) => {
+    process.stderr.write(`[MCP] Telegram send error: ${e.message}\n`);
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -134,6 +235,9 @@ function connectToMcp() {
           title: 'MCP SQL Proxy',
           body: msg.description || 'Neue SQL-Query wartet auf Freigabe',
         });
+
+        // Send to Telegram if enabled
+        sendQueryToTelegram(msg.id, msg.query, msg.description);
       }
     } catch (e) {
       console.error('Failed to parse MCP message:', e);
@@ -251,6 +355,22 @@ ipcMain.handle('open-script-external', async (_event, filename: string) => {
 
 ipcMain.handle('get-scripts-dir', () => getScriptsDir());
 
+// Telegram settings
+ipcMain.handle('get-telegram-settings', () => ({
+  botToken: store.get('telegram.botToken') || '',
+  chatId: store.get('telegram.chatId') || '',
+  enabled: store.get('telegram.enabled') || false,
+}));
+
+ipcMain.handle('save-telegram-settings', async (_event, settings: { botToken: string; chatId: string; enabled: boolean }) => {
+  store.set('telegram.botToken', settings.botToken);
+  store.set('telegram.chatId', settings.chatId);
+  store.set('telegram.enabled', settings.enabled);
+  telegramEnabled = settings.enabled;
+  initTelegram();
+  return true;
+});
+
 ipcMain.on('set-app-icon', (_event, pngDataUrl: string) => {
   try {
     const img = nativeImage.createFromDataURL(pngDataUrl);
@@ -312,6 +432,7 @@ app.whenReady().then(() => {
   createWindow();
   connectToMcp();
   initScriptWatcher();
+  initTelegram();
 });
 
 app.on('window-all-closed', () => {

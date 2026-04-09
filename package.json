@@ -12,10 +12,12 @@
     "@modelcontextprotocol/sdk": "^1.12.1",
     "electron-store": "^8.2.0",
     "mysql2": "^3.14.1",
+    "node-telegram-bot-api": "^0.67.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
+    "@types/node-telegram-bot-api": "^0.64.14",
     "@types/ws": "^8.18.1",
     "electron": "^35.1.2",
     "shx": "^0.4.0",

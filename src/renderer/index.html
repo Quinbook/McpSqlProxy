@@ -93,6 +93,22 @@
           <input id="db-database" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" />
         </div>
       </div>
+      <h2 class="text-sm font-semibold mb-3 mt-4">Telegram Remote Control</h2>
+      <div class="flex items-center gap-3 mb-2">
+        <label class="text-xs text-gray-400">Enabled</label>
+        <input id="tg-enabled" type="checkbox" class="w-4 h-4" />
+        <span id="tg-status" class="text-xs px-2 py-0.5 rounded-full bg-gray-600">Off</span>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs text-gray-400">Bot Token</label>
+          <input id="tg-token" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" placeholder="123456:ABC-..." />
+        </div>
+        <div>
+          <label class="text-xs text-gray-400">Chat ID</label>
+          <input id="tg-chatid" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" placeholder="-1001234567890" />
+        </div>
+      </div>
       <div class="flex gap-2 mt-3">
         <button onclick="saveSettings()" class="text-sm px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded">Save</button>
         <button onclick="testConnection()" class="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded">Test Connection</button>
@@ -368,6 +384,14 @@
       document.getElementById('db-user').value = settings.user || '';
       document.getElementById('db-password').value = settings.password || '';
       document.getElementById('db-database').value = settings.database || '';
+      // Telegram
+      const tg = await window.api.getTelegramSettings();
+      document.getElementById('tg-token').value = tg.botToken || '';
+      document.getElementById('tg-chatid').value = tg.chatId || '';
+      document.getElementById('tg-enabled').checked = tg.enabled || false;
+      const tgStatus = document.getElementById('tg-status');
+      if (tg.enabled) { tgStatus.textContent = 'On'; tgStatus.className = 'text-xs px-2 py-0.5 rounded-full bg-green-600'; }
+      else { tgStatus.textContent = 'Off'; tgStatus.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-600'; }
       // Check if scripts dir is configured (via env var)
       const scriptsDir = await window.api.getScriptsDir();
       const scriptsBtn = document.getElementById('scripts-btn');
@@ -406,6 +430,11 @@
         database: document.getElementById('db-database').value,
       };
       await window.api.saveDbSettings(settings);
+      await window.api.saveTelegramSettings({
+        botToken: document.getElementById('tg-token').value.trim(),
+        chatId: document.getElementById('tg-chatid').value.trim(),
+        enabled: document.getElementById('tg-enabled').checked,
+      });
       updateDbStatus('saved', 'bg-blue-600');
     }
 
@@ -1000,6 +1029,23 @@
       };
       img.src = 'icon.svg';
     }
+
+    // --- Remote Query Handling (Telegram) ---
+    window.api.onQueryHandledRemotely((id) => {
+      queries = queries.filter(q => q.id !== id);
+      if (currentQuery?.id === id) {
+        currentQuery = null;
+        currentResult = null;
+        if (queries.length > 0) {
+          selectQuery(queries[0].id);
+        } else {
+          document.getElementById('empty-state').classList.remove('hidden');
+          document.getElementById('query-detail').classList.add('hidden');
+        }
+      }
+      renderQueryList();
+      showToast('Remote', 'Query was handled via Telegram');
+    });
 
     // --- Init ---
     loadSettings();
