@@ -30,4 +30,5 @@ contextBridge.exposeInMainWorld('api', {
   onShowNotification: (callback: (data: any) => void) => {
     ipcRenderer.on('show-notification', (_event, data) => callback(data));
   },
+  setAppIcon: (pngDataUrl: string) => ipcRenderer.send('set-app-icon', pngDataUrl),
 });

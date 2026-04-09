@@ -905,11 +905,26 @@
       }
     });
 
+    // --- Generate App Icon from SVG ---
+    function generateAppIcon() {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 256;
+        canvas.height = 256;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, 256, 256);
+        window.api.setAppIcon(canvas.toDataURL('image/png'));
+      };
+      img.src = 'icon.svg';
+    }
+
     // --- Init ---
     loadSettings();
     testConnection(); // auto-test DB on startup
     initResize('query-resize-handle', 'query-sidebar');
     initResize('scripts-resize-handle', 'scripts-sidebar');
+    generateAppIcon();
     // Request notification permission on startup
     if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
       Notification.requestPermission();

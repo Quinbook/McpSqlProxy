@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, shell, nativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import WebSocket from 'ws';
@@ -228,6 +228,15 @@ ipcMain.handle('read-script', async (_event, filename: string) => {
 
 ipcMain.handle('open-script-external', async (_event, filename: string) => {
   shell.openPath(path.join(SCRIPTS_DIR, filename));
+});
+
+ipcMain.on('set-app-icon', (_event, pngDataUrl: string) => {
+  try {
+    const img = nativeImage.createFromDataURL(pngDataUrl);
+    mainWindow?.setIcon(img);
+  } catch (e: any) {
+    process.stderr.write(`[MCP] Set icon error: ${e.message}\n`);
+  }
 });
 
 // --- File Watcher for SQL Scripts ---
