@@ -68,20 +68,12 @@ npm run build
 
 ### Configure Claude Code
 
-Add to your project's `.mcp.json`:
+In Claude Code, run `/mcp` and add a new **stdio** server:
 
-```json
-{
-  "mcpServers": {
-    "sql-proxy": {
-      "command": "node",
-      "args": ["/path/to/McpSqlProxy/dist/mcp/server.js"]
-    }
-  }
-}
-```
+- **Name:** `sql-proxy`
+- **Command:** `node /path/to/McpSqlProxy/dist/mcp/server.js`
 
-Then connect in Claude Code with `/mcp`.
+Claude Code creates the `.mcp.json` configuration automatically.
 
 ### Configure Database
 
