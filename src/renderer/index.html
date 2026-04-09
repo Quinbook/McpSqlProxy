@@ -1031,9 +1031,10 @@
     }
 
     // --- Remote Query Handling (Telegram) ---
-    window.api.onQueryHandledRemotely((id) => {
-      queries = queries.filter(q => q.id !== id);
-      if (currentQuery?.id === id) {
+    window.api.onQueryHandledRemotely((data) => {
+      addToHistory({ query: data.query }, data.status);
+      queries = queries.filter(q => q.id !== data.id);
+      if (currentQuery?.id === data.id) {
         currentQuery = null;
         currentResult = null;
         if (queries.length > 0) {
@@ -1044,7 +1045,7 @@
         }
       }
       renderQueryList();
-      showToast('Remote', 'Query was handled via Telegram');
+      showToast('Telegram', `Query ${data.status}`);
     });
 
     // --- Init ---

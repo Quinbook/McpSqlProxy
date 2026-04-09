@@ -70,8 +70,8 @@ function initTelegram() {
             `✅ *Executed*\n\`\`\`sql\n${pending.query}\n\`\`\`\nResult: \`${preview}...\``,
             { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id, parse_mode: 'Markdown' }
           ).catch(() => {});
-          // Remove from Electron UI pending list
-          mainWindow?.webContents.send('query-handled-remotely', pending.id);
+          // Remove from Electron UI pending list + add to history
+          mainWindow?.webContents.send('query-handled-remotely', { id: pending.id, status: 'sent (Telegram)', query: pending.query });
         } catch (e: any) {
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'error', id: pending.id, error: e.message }));
@@ -90,7 +90,7 @@ function initTelegram() {
           `🚫 *Rejected*\n\`\`\`sql\n${pending.query}\n\`\`\``,
           { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id, parse_mode: 'Markdown' }
         ).catch(() => {});
-        mainWindow?.webContents.send('query-handled-remotely', pending.id);
+        mainWindow?.webContents.send('query-handled-remotely', { id: pending.id, status: 'rejected (Telegram)', query: pending.query });
       }
 
       pendingTelegramQueries.delete(queryId);

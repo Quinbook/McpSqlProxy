@@ -37,8 +37,8 @@ contextBridge.exposeInMainWorld('api', {
   onShowNotification: (callback: (data: any) => void) => {
     ipcRenderer.on('show-notification', (_event, data) => callback(data));
   },
-  onQueryHandledRemotely: (callback: (id: string) => void) => {
-    ipcRenderer.on('query-handled-remotely', (_event, id) => callback(id));
+  onQueryHandledRemotely: (callback: (data: { id: string; status: string; query: string }) => void) => {
+    ipcRenderer.on('query-handled-remotely', (_event, data) => callback(data));
   },
 
   // Telegram
