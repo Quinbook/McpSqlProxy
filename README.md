@@ -50,45 +50,29 @@ Claude Code  --MCP/stdio-->  MCP Server  --WebSocket-->  Electron UI  --mysql2--
 - DB connection settings with auto-test on startup
 - MCP connection status indicator
 
-## Setup
+## Quick Setup
 
-### Prerequisites
+Prerequisites: [Node.js](https://nodejs.org/) (v18+) and a MySQL/MariaDB database.
 
-- [Node.js](https://nodejs.org/) (v18+)
-- A MySQL or MariaDB database
+Copy this prompt into Claude Code and it will do the rest:
 
-### Install
-
-```bash
-git clone https://github.com/Quinbook/McpSqlProxy.git
-cd McpSqlProxy
-npm install
-npm run build
+```
+Clone https://github.com/Quinbook/McpSqlProxy.git into my projects folder,
+run npm install && npm run build, then add it as an MCP server called "sql-proxy"
+via /mcp (stdio, command: node <path>/dist/mcp/server.js).
 ```
 
-### Configure Claude Code
+After that, the Electron app launches automatically when Claude runs a query. On first launch, enter your database credentials in the Settings panel and click **Save**.
 
-In Claude Code, run `/mcp` and add a new **stdio** server:
+### SQL Scripts Directory (optional)
 
-- **Name:** `sql-proxy`
-- **Command:** `node /path/to/McpSqlProxy/dist/mcp/server.js`
+If you want the built-in script browser, tell Claude where your SQL scripts live. Add this to your `CLAUDE.md` or Claude Code memory:
 
-Claude Code creates the `.mcp.json` configuration automatically.
-
-### Configure Database
-
-On first launch, the Settings panel opens automatically. Enter your database credentials, click **Test Connection** to verify, then **Save**. Credentials are stored locally via `electron-store`.
-
-### SQL Scripts Directory
-
-The Scripts browser lets you view SQL change scripts from a directory. To enable it, Claude calls the `set_scripts_dir` MCP tool with the path to your scripts folder. Add a memory entry or `CLAUDE.md` instruction so Claude does this automatically at the start of each conversation:
-
-```markdown
-At the start of each conversation, call `set_scripts_dir` with path "/path/to/your/sql/scripts"
-to enable the Scripts browser in the SQL Proxy app.
+```
+When the sql-proxy MCP is connected, call set_scripts_dir with path "/path/to/your/sql/scripts"
 ```
 
-The app remembers the path for the duration of the MCP session. When Claude creates new script files in that directory, the app detects them automatically, shows a notification, and highlights them in the Scripts view.
+The app remembers the path across restarts. New scripts are detected automatically and highlighted in the Scripts view.
 
 ## Usage
 
