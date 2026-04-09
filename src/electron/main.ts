@@ -5,8 +5,6 @@ import WebSocket from 'ws';
 import * as mysql from 'mysql2/promise';
 import Store from 'electron-store';
 
-const SCRIPTS_DIR = 'C:\\GIT-WOIZZER\\WoizzerDatabase\\changes';
-
 const store = new Store({
   defaults: {
     db: {
@@ -16,6 +14,7 @@ const store = new Store({
       password: '',
       database: 'woizzertickets',
     },
+    scriptsDir: '',
   },
 });
 
@@ -38,10 +37,17 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  // Send current MCP status once the page is loaded
+  // Send current MCP status once the page is loaded, open settings on first launch
   mainWindow.webContents.on('did-finish-load', () => {
     const status = (ws && ws.readyState === WebSocket.OPEN) ? 'connected' : 'disconnected';
     mainWindow?.webContents.send('mcp-status', status);
+
+    // First launch: open settings if DB user or scripts dir not configured
+    const dbConfig = store.get('db') as any;
+    const scriptsDir = store.get('scriptsDir') as string;
+    if (!dbConfig?.user || !scriptsDir) {
+      mainWindow?.webContents.send('open-settings');
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -202,12 +208,18 @@ ipcMain.handle('test-db-connection', async () => {
 });
 
 // SQL Scripts
+function getScriptsDir(): string {
+  return store.get('scriptsDir') as string || '';
+}
+
 ipcMain.handle('get-scripts', async () => {
+  const dir = getScriptsDir();
+  if (!dir) return { success: false, error: 'Scripts directory not configured. Go to Settings.' };
   try {
-    const files = fs.readdirSync(SCRIPTS_DIR)
+    const files = fs.readdirSync(dir)
       .filter(f => f.endsWith('.sql'))
       .map(f => {
-        const stat = fs.statSync(path.join(SCRIPTS_DIR, f));
+        const stat = fs.statSync(path.join(dir, f));
         return { name: f, modified: stat.mtime.toISOString(), size: stat.size };
       })
       .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime());
@@ -218,8 +230,10 @@ ipcMain.handle('get-scripts', async () => {
 });
 
 ipcMain.handle('read-script', async (_event, filename: string) => {
+  const dir = getScriptsDir();
+  if (!dir) return { success: false, error: 'Scripts directory not configured' };
   try {
-    const content = fs.readFileSync(path.join(SCRIPTS_DIR, filename), 'utf-8');
+    const content = fs.readFileSync(path.join(dir, filename), 'utf-8');
     return { success: true, content };
   } catch (e: any) {
     return { success: false, error: e.message };
@@ -227,7 +241,16 @@ ipcMain.handle('read-script', async (_event, filename: string) => {
 });
 
 ipcMain.handle('open-script-external', async (_event, filename: string) => {
-  shell.openPath(path.join(SCRIPTS_DIR, filename));
+  const dir = getScriptsDir();
+  if (dir) shell.openPath(path.join(dir, filename));
+});
+
+ipcMain.handle('get-scripts-dir', () => getScriptsDir());
+
+ipcMain.handle('save-scripts-dir', async (_event, dir: string) => {
+  store.set('scriptsDir', dir);
+  initScriptWatcher(); // restart watcher with new dir
+  return true;
 });
 
 ipcMain.on('set-app-icon', (_event, pngDataUrl: string) => {
@@ -242,22 +265,28 @@ ipcMain.on('set-app-icon', (_event, pngDataUrl: string) => {
 // --- File Watcher for SQL Scripts ---
 let knownScripts = new Set<string>();
 let watcherReady = false;
+let currentWatcher: fs.FSWatcher | null = null;
 
 function initScriptWatcher() {
+  const dir = getScriptsDir();
+  // Cleanup previous watcher
+  if (currentWatcher) { currentWatcher.close(); currentWatcher = null; }
+  knownScripts.clear();
+  watcherReady = false;
+
+  if (!dir || !fs.existsSync(dir)) return;
+
   try {
-    // Build initial set of known files
-    const existing = fs.readdirSync(SCRIPTS_DIR).filter(f => f.endsWith('.sql'));
+    const existing = fs.readdirSync(dir).filter(f => f.endsWith('.sql'));
     existing.forEach(f => knownScripts.add(f));
     watcherReady = true;
 
-    fs.watch(SCRIPTS_DIR, (eventType, filename) => {
+    currentWatcher = fs.watch(dir, (eventType, filename) => {
       if (!filename || !filename.endsWith('.sql') || !watcherReady) return;
 
-      // Check if this is actually a new file
-      const filePath = path.join(SCRIPTS_DIR, filename);
-      if (!fs.existsSync(filePath)) return; // deleted
+      const filePath = path.join(dir, filename);
+      if (!fs.existsSync(filePath)) return;
       if (knownScripts.has(filename)) {
-        // File was modified, not new — notify as update
         mainWindow?.webContents.send('script-changed', { name: filename, isNew: false });
         return;
       }
@@ -265,7 +294,6 @@ function initScriptWatcher() {
       knownScripts.add(filename);
       mainWindow?.webContents.send('script-changed', { name: filename, isNew: true });
 
-      // Windows notification
       mainWindow?.flashFrame(true);
       mainWindow?.webContents.send('show-notification', {
         title: 'Neues SQL Script',
@@ -273,7 +301,7 @@ function initScriptWatcher() {
       });
     });
 
-    process.stderr.write(`[MCP] Watching scripts dir: ${SCRIPTS_DIR}\n`);
+    process.stderr.write(`[MCP] Watching scripts dir: ${dir}\n`);
   } catch (e: any) {
     process.stderr.write(`[MCP] Script watcher error: ${e.message}\n`);
   }
