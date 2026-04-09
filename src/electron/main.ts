@@ -114,6 +114,7 @@ function connectToMcp() {
       const msg = JSON.parse(data.toString());
       if (msg.type === 'set_scripts_dir') {
         scriptsDirOverride = msg.path || '';
+        store.set('scriptsDir', scriptsDirOverride); // persist for next launch
         mainWindow?.webContents.send('scripts-dir-changed', scriptsDirOverride);
         initScriptWatcher();
       } else if (msg.type === 'query') {
@@ -212,7 +213,7 @@ ipcMain.handle('test-db-connection', async () => {
 
 // SQL Scripts
 function getScriptsDir(): string {
-  return scriptsDirOverride || process.env.SCRIPTS_DIR || '';
+  return scriptsDirOverride || process.env.SCRIPTS_DIR || store.get('scriptsDir') as string || '';
 }
 
 ipcMain.handle('get-scripts', async () => {
