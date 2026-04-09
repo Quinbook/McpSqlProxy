@@ -103,48 +103,43 @@ Click the **Scripts** button in the header to browse SQL files from the configur
 
 ## Configuring Claude Code
 
-For Claude to use the tool correctly, add the following rules to your project's `CLAUDE.md` or Claude Code memory:
+To get the most out of the tool, tell Claude how to use it via your project's `CLAUDE.md` or Claude Code memory. Here are some recommended rules:
 
 ### Database Rules
 
-```markdown
-- Database is MariaDB/MySQL -- use `CALL` syntax for stored procedures, not `EXEC`
-- For test queries, use `sp_GetSession(0)` as the auth/session parameter
-- Use `i_company = 3` (or your test company ID) for testing
-- All database access in application code must go through stored procedures via SqlHelper
-- Never write direct SQL in application code
-```
-
-### Script Rules
+Tell Claude which database dialect you use and how queries should be structured:
 
 ```markdown
-- All database changes (new tables, altered columns, new/modified SPs) must be saved
-  as SQL scripts in the configured scripts directory (e.g. `C:\GIT-WOIZZER\WoizzerDatabase\changes\`)
-- Never modify existing stored procedures in place -- always create a new versioned copy
-  (e.g. `sp_GetShifts` -> `sp_GetShifts2`) and update the application code to call the new version
-- After creating scripts, the SQL Proxy app will automatically detect and highlight them
+- Use the MCP tool `execute_sql` for database queries
+- Use `CALL` syntax for stored procedures (MySQL/MariaDB) or `EXEC` (SQL Server)
+- Always let the user approve queries before execution
+- When creating database changes (new tables, stored procedures, migrations),
+  save them as SQL scripts -- don't just execute them directly
 ```
 
-### Example Memory Entry
+### Script Management
 
-If you use Claude Code's auto-memory feature, save a reference like:
+If you use the script browser feature, tell Claude where to save change scripts:
+
+```markdown
+- Save all database change scripts in /path/to/your/scripts/directory/
+- The SQL Proxy app will automatically detect and highlight new scripts
+```
+
+### Claude Code Memory Example
+
+If you use Claude Code's auto-memory, save a reference entry so Claude remembers the tool across conversations:
 
 ```markdown
 ---
 name: MCP SQL Proxy for DB queries
-description: Use MCP tool execute_sql for direct SQL queries against the dev DB (MariaDB, CALL syntax for SPs)
+description: Use MCP tool execute_sql for direct SQL queries against the dev DB
 type: reference
 ---
 
-For database queries two paths are available:
-
-1. **MCP SQL Proxy** (`mcp__sql-proxy__execute_sql`) -- direct SQL queries against the dev DB
-   - Stored procedures: `CALL sp_Name(...)` (not EXEC)
-   - Auth parameter: `sp_GetSession(0)`
-   - Test company: `i_company = 3`
-   - User approves every query before execution
-
-2. **Database change scripts** -- read SP definitions and change scripts from the scripts directory
+Use the MCP SQL Proxy (`mcp__sql-proxy__execute_sql`) for database queries.
+The user reviews and approves every query before execution.
+Save database changes as SQL scripts in the configured scripts directory.
 ```
 
 ### Script Directory Configuration
@@ -152,10 +147,10 @@ For database queries two paths are available:
 The scripts directory is configured in `src/electron/main.ts`:
 
 ```typescript
-const SCRIPTS_DIR = 'C:\\path\\to\\your\\database\\changes';
+const SCRIPTS_DIR = 'C:\\path\\to\\your\\scripts';
 ```
 
-Change this path to point to your SQL change scripts directory and rebuild (`npm run build`).
+Change this path to your SQL scripts directory and rebuild (`npm run build`).
 
 ## Development
 
