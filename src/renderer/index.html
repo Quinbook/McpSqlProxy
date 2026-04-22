@@ -463,15 +463,26 @@
       if (!currentQuery) selectQuery(query.id);
     });
 
-    window.api.onMcpStatus((status) => {
+    let mcpClientCount = 0;
+    function updateMcpStatusDisplay() {
       const el = document.getElementById('mcp-status');
-      if (status === 'connected') {
-        el.textContent = 'MCP: connected';
+      if (mcpClientCount > 0) {
+        el.textContent = `MCP: connected (${mcpClientCount})`;
         el.className = 'text-xs px-2 py-0.5 rounded-full bg-green-600';
       } else {
         el.textContent = 'MCP: disconnected';
         el.className = 'text-xs px-2 py-0.5 rounded-full bg-red-600';
       }
+    }
+
+    window.api.onMcpStatus((status) => {
+      if (status === 'disconnected') mcpClientCount = 0;
+      updateMcpStatusDisplay();
+    });
+
+    window.api.onMcpClientCount((count) => {
+      mcpClientCount = count;
+      updateMcpStatusDisplay();
     });
 
     function renderQueryList() {

@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('api', {
   onMcpStatus: (callback: (status: string) => void) => {
     ipcRenderer.on('mcp-status', (_event, status) => callback(status));
   },
+  onMcpClientCount: (callback: (count: number) => void) => {
+    ipcRenderer.on('mcp-client-count', (_event, count) => callback(count));
+  },
 
   // DB settings
   getDbSettings: () => ipcRenderer.invoke('get-db-settings'),

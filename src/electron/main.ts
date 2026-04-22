@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, Notification, shell, nativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import WebSocket from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
+import * as http from 'http';
 import * as mysql from 'mysql2/promise';
 import Store from 'electron-store';
 import TelegramBot from 'node-telegram-bot-api';
@@ -19,9 +20,13 @@ const store = new Store({
 });
 
 let mainWindow: BrowserWindow | null = null;
-let ws: WebSocket | null = null;
 let dbConnection: mysql.Connection | null = null;
 let scriptsDirOverride: string = '';
+
+// --- Multi-client tracking ---
+// Maps query ID to the WebSocket client that sent it, so results go back to the right MCP process
+const queryToClient = new Map<string, WebSocket>();
+const mcpClients = new Set<WebSocket>();
 
 // --- Telegram Bot ---
 let telegramBot: TelegramBot | null = null;
@@ -55,51 +60,70 @@ function initTelegram() {
         return;
       }
 
+      const client = queryToClient.get(pending.id);
+
       if (action === 'approve') {
         telegramBot?.answerCallbackQuery(callbackQuery.id, { text: 'Executing...' });
         try {
           const result = await executeQuery(pending.query);
-          // Send result back to MCP
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            const resultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-            ws.send(JSON.stringify({ type: 'result', id: pending.id, data: result }));
+          // Send result back to the correct MCP client
+          if (client && client.readyState === WebSocket.OPEN) {
+            ws_sendResult(client, pending.id, result);
           }
-          // Update Telegram message
           const preview = JSON.stringify(result).substring(0, 200);
+          const execPreview = buildTelegramQueryPreview(pending.query);
           telegramBot?.editMessageText(
-            `✅ *Executed*\n\`\`\`sql\n${pending.query}\n\`\`\`\nResult: \`${preview}...\``,
-            { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id, parse_mode: 'Markdown' }
+            `✅ Executed\n${execPreview.text}\n\nResult: ${preview}...`,
+            { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id }
           ).catch(() => {});
-          // Remove from Electron UI pending list + add to history
           mainWindow?.webContents.send('query-handled-remotely', { id: pending.id, status: 'sent (Telegram)', query: pending.query });
         } catch (e: any) {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'error', id: pending.id, error: e.message }));
+          if (client && client.readyState === WebSocket.OPEN) {
+            ws_sendError(client, pending.id, e.message);
           }
+          const errPreview = buildTelegramQueryPreview(pending.query);
           telegramBot?.editMessageText(
-            `❌ *Error*\n\`\`\`sql\n${pending.query}\n\`\`\`\nError: ${e.message}`,
-            { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id, parse_mode: 'Markdown' }
+            `❌ Error\n${errPreview.text}\n\nError: ${e.message}`,
+            { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id }
           ).catch(() => {});
         }
       } else if (action === 'reject') {
         telegramBot?.answerCallbackQuery(callbackQuery.id, { text: 'Rejected' });
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'rejected', id: pending.id, reason: 'Rejected via Telegram' }));
+        if (client && client.readyState === WebSocket.OPEN) {
+          ws_sendRejected(client, pending.id, 'Rejected via Telegram');
         }
+        const rejPreview = buildTelegramQueryPreview(pending.query);
         telegramBot?.editMessageText(
-          `🚫 *Rejected*\n\`\`\`sql\n${pending.query}\n\`\`\``,
-          { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id, parse_mode: 'Markdown' }
+          `🚫 Rejected\n${rejPreview.text}`,
+          { chat_id: callbackQuery.message!.chat.id, message_id: callbackQuery.message!.message_id }
         ).catch(() => {});
         mainWindow?.webContents.send('query-handled-remotely', { id: pending.id, status: 'rejected (Telegram)', query: pending.query });
       }
 
       pendingTelegramQueries.delete(queryId);
+      queryToClient.delete(pending.id);
     });
 
     process.stderr.write('[MCP] Telegram bot started\n');
   } catch (e: any) {
     process.stderr.write(`[MCP] Telegram bot error: ${e.message}\n`);
   }
+}
+
+// Telegram caps messages at 4096 chars. Leave headroom for header, description, fences, markdown.
+// If the query is longer, send a head+tail preview so the user can still approve / reject.
+function buildTelegramQueryPreview(query: string, maxQueryChars = 3200): { text: string; truncated: boolean } {
+  if (query.length <= maxQueryChars) return { text: query, truncated: false };
+  const keep = maxQueryChars - 80; // room for the cut marker
+  const headLen = Math.floor(keep * 0.75);
+  const tailLen = keep - headLen;
+  const head = query.substring(0, headLen);
+  const tail = query.substring(query.length - tailLen);
+  const removed = query.length - headLen - tailLen;
+  return {
+    text: `${head}\n\n-- ... (${removed} chars / ${(removed / 1024).toFixed(1)} KB truncated for Telegram preview) ...\n\n${tail}`,
+    truncated: true,
+  };
 }
 
 function sendQueryToTelegram(id: string, query: string, description?: string) {
@@ -109,10 +133,16 @@ function sendQueryToTelegram(id: string, query: string, description?: string) {
 
   pendingTelegramQueries.set(id, { id, query, description });
 
-  const text = `🔍 *New SQL Query*${description ? `\n_${description}_` : ''}\n\`\`\`sql\n${query}\n\`\`\``;
+  const preview = buildTelegramQueryPreview(query);
+  const sizeNote = preview.truncated
+    ? `\n⚠️ Query is ${query.length} chars (${(query.length / 1024).toFixed(1)} KB). Preview truncated — full query is visible in the desktop app.`
+    : '';
+  const descPart = description ? `\n${description}` : '';
+  const text = `🔍 New SQL Query${descPart}${sizeNote}\n\n${preview.text}`;
 
+  // Note: no parse_mode — plain text is the only reliable option because SQL freely
+  // contains _, *, [, ], `, (, ) which break both legacy Markdown and MarkdownV2.
   telegramBot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [[
         { text: '✅ Execute', callback_data: `approve:${id}` },
@@ -123,6 +153,15 @@ function sendQueryToTelegram(id: string, query: string, description?: string) {
     telegramMessageIds.set(id, { chatId: msg.chat.id, messageId: msg.message_id });
   }).catch((e) => {
     process.stderr.write(`[MCP] Telegram send error: ${e.message}\n`);
+    pendingTelegramQueries.delete(id);
+    const client = queryToClient.get(id);
+    if (client && client.readyState === WebSocket.OPEN) {
+      ws_sendError(
+        client,
+        id,
+        `Telegram notification failed: ${e.message}. Query was NOT executed — no approval request could be delivered to Telegram. Likely causes: Markdown special chars (_, *, [, ], backtick) in description, Telegram API outage, or invalid bot token.`
+      );
+    }
   });
 }
 
@@ -134,12 +173,28 @@ function dismissTelegramQuery(queryId: string, statusText: string) {
   const queryPreview = pending ? pending.query.substring(0, 100) : '';
 
   telegramBot.editMessageText(
-    `${statusText}\n\`\`\`sql\n${queryPreview}\n\`\`\``,
-    { chat_id: msgRef.chatId, message_id: msgRef.messageId, parse_mode: 'Markdown' }
+    `${statusText}\n${queryPreview}`,
+    { chat_id: msgRef.chatId, message_id: msgRef.messageId }
   ).catch(() => {});
 
   pendingTelegramQueries.delete(queryId);
   telegramMessageIds.delete(queryId);
+}
+
+// --- Helper: send messages to specific MCP client ---
+function ws_sendResult(client: WebSocket, id: string, data: any) {
+  client.send(JSON.stringify({ type: 'result', id, data }));
+  queryToClient.delete(id);
+}
+
+function ws_sendError(client: WebSocket, id: string, error: string) {
+  client.send(JSON.stringify({ type: 'error', id, error }));
+  queryToClient.delete(id);
+}
+
+function ws_sendRejected(client: WebSocket, id: string, reason: string) {
+  client.send(JSON.stringify({ type: 'rejected', id, reason }));
+  queryToClient.delete(id);
 }
 
 function createWindow() {
@@ -157,12 +212,11 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  // Send current MCP status once the page is loaded, open settings on first launch
   mainWindow.webContents.on('did-finish-load', () => {
-    const status = (ws && ws.readyState === WebSocket.OPEN) ? 'connected' : 'disconnected';
-    mainWindow?.webContents.send('mcp-status', status);
+    const clientCount = mcpClients.size;
+    mainWindow?.webContents.send('mcp-status', clientCount > 0 ? 'connected' : 'disconnected');
+    mainWindow?.webContents.send('mcp-client-count', clientCount);
 
-    // First launch: open settings if DB user not configured
     const dbConfig = store.get('db') as any;
     if (!dbConfig?.user) {
       mainWindow?.webContents.send('open-settings');
@@ -202,8 +256,6 @@ async function executeQuery(query: string): Promise<any> {
   const conn = await getDbConnection();
   const [rows] = await conn.query(query);
 
-  // CALL statements (stored procedures) return nested arrays: [[resultSet1, resultSet2, ...], fields]
-  // Extract all result sets that contain actual row data
   if (Array.isArray(rows) && rows.length > 0 && Array.isArray(rows[0])) {
     const resultSets: any[][] = [];
     for (const rs of rows as any[]) {
@@ -211,7 +263,6 @@ async function executeQuery(query: string): Promise<any> {
         resultSets.push(rs);
       }
     }
-    // Single result set: return flat array; multiple: wrap with _resultSetIndex marker
     if (resultSets.length === 1) return resultSets[0];
     if (resultSets.length > 1) return { _multipleResultSets: true, resultSets };
     return rows[0];
@@ -220,64 +271,102 @@ async function executeQuery(query: string): Promise<any> {
   return rows;
 }
 
-// --- WebSocket connection to MCP server ---
-function connectToMcp() {
-  const port = process.env.MCP_WS_PORT || '52345';
-  ws = new WebSocket(`ws://127.0.0.1:${port}`);
+// --- WebSocket Server (accepts connections from MCP processes) ---
+const WS_PORT = 52345;
 
-  ws.on('open', () => {
-    mainWindow?.webContents.send('mcp-status', 'connected');
-  });
-
-  ws.on('message', (data) => {
-    try {
-      const msg = JSON.parse(data.toString());
-      if (msg.type === 'set_scripts_dir') {
-        scriptsDirOverride = msg.path || '';
-        store.set('scriptsDir', scriptsDirOverride); // persist for next launch
-        mainWindow?.webContents.send('scripts-dir-changed', scriptsDirOverride);
-        initScriptWatcher();
-      } else if (msg.type === 'query') {
-        // Forward to renderer
-        mainWindow?.webContents.send('new-query', {
-          id: msg.id,
-          query: msg.query,
-          description: msg.description,
-        });
-        // Flash/focus window
-        mainWindow?.flashFrame(true);
-        if (mainWindow?.isMinimized()) mainWindow.restore();
-        mainWindow?.focus();
-
-        // Send notification request to renderer (Web Notification API)
-        mainWindow?.webContents.send('show-notification', {
-          title: 'MCP SQL Proxy',
-          body: msg.description || 'Neue SQL-Query wartet auf Freigabe',
-        });
-
-        // Send to Telegram if enabled
-        sendQueryToTelegram(msg.id, msg.query, msg.description);
-      }
-    } catch (e) {
-      console.error('Failed to parse MCP message:', e);
+function startWebSocketServer() {
+  // HTTP server for health check + WebSocket upgrade
+  const httpServer = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('ok');
+    } else {
+      res.writeHead(404);
+      res.end();
     }
   });
 
-  ws.on('close', () => {
-    mainWindow?.webContents.send('mcp-status', 'disconnected');
-    // Reconnect after delay
-    setTimeout(connectToMcp, 2000);
+  const wss = new WebSocketServer({ server: httpServer });
+
+  wss.on('connection', (ws) => {
+    mcpClients.add(ws);
+    process.stderr.write(`[MCP] MCP client connected (total: ${mcpClients.size})\n`);
+    mainWindow?.webContents.send('mcp-status', 'connected');
+    mainWindow?.webContents.send('mcp-client-count', mcpClients.size);
+
+    // Send scripts dir if already set
+    const scriptsDir = getScriptsDir();
+    if (scriptsDir) {
+      ws.send(JSON.stringify({ type: 'set_scripts_dir', path: scriptsDir }));
+    }
+
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'set_scripts_dir') {
+          scriptsDirOverride = msg.path || '';
+          store.set('scriptsDir', scriptsDirOverride);
+          mainWindow?.webContents.send('scripts-dir-changed', scriptsDirOverride);
+          initScriptWatcher();
+        } else if (msg.type === 'query') {
+          // Track which client sent this query
+          queryToClient.set(msg.id, ws);
+
+          // Forward to renderer
+          mainWindow?.webContents.send('new-query', {
+            id: msg.id,
+            query: msg.query,
+            description: msg.description,
+          });
+          mainWindow?.flashFrame(true);
+          if (mainWindow?.isMinimized()) mainWindow.restore();
+          mainWindow?.focus();
+
+          mainWindow?.webContents.send('show-notification', {
+            title: 'MCP SQL Proxy',
+            body: msg.description || 'Neue SQL-Query wartet auf Freigabe',
+          });
+
+          sendQueryToTelegram(msg.id, msg.query, msg.description);
+        }
+      } catch (e) {
+        console.error('Failed to parse MCP message:', e);
+      }
+    });
+
+    ws.on('close', () => {
+      mcpClients.delete(ws);
+      process.stderr.write(`[MCP] MCP client disconnected (total: ${mcpClients.size})\n`);
+      mainWindow?.webContents.send('mcp-client-count', mcpClients.size);
+      if (mcpClients.size === 0) {
+        mainWindow?.webContents.send('mcp-status', 'disconnected');
+      }
+
+      // Clean up queries from disconnected client
+      for (const [queryId, client] of queryToClient) {
+        if (client === ws) {
+          queryToClient.delete(queryId);
+        }
+      }
+    });
   });
 
-  ws.on('error', (err) => {
-    console.error('WebSocket error:', err.message);
-    // Will trigger close → reconnect
+  httpServer.listen(WS_PORT, '127.0.0.1', () => {
+    process.stderr.write(`[MCP] WebSocket server listening on port ${WS_PORT}\n`);
+  });
+
+  httpServer.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      process.stderr.write(`[MCP] Port ${WS_PORT} already in use — another Electron instance is probably running. Exiting.\n`);
+      app.quit();
+    } else {
+      process.stderr.write(`[MCP] HTTP server error: ${err.message}\n`);
+    }
   });
 }
 
 // --- IPC Handlers ---
 
-// Execute approved query
 ipcMain.handle('approve-query', async (_event, { id, query }) => {
   try {
     const result = await executeQuery(query);
@@ -287,38 +376,36 @@ ipcMain.handle('approve-query', async (_event, { id, query }) => {
   }
 });
 
-// Send result back to MCP
 ipcMain.on('send-result', (_event, { id, data }) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'result', id, data }));
+  const client = queryToClient.get(id);
+  if (client && client.readyState === WebSocket.OPEN) {
+    ws_sendResult(client, id, data);
   }
   dismissTelegramQuery(id, '✅ Handled in app');
 });
 
-// Send error back to MCP
 ipcMain.on('send-error', (_event, { id, error }) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'error', id, error }));
+  const client = queryToClient.get(id);
+  if (client && client.readyState === WebSocket.OPEN) {
+    ws_sendError(client, id, error);
   }
   dismissTelegramQuery(id, '⚠️ Error (handled in app)');
 });
 
-// Reject query
 ipcMain.on('reject-query', (_event, { id, reason }) => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'rejected', id, reason }));
+  const client = queryToClient.get(id);
+  if (client && client.readyState === WebSocket.OPEN) {
+    ws_sendRejected(client, id, reason);
   }
   dismissTelegramQuery(id, '🚫 Rejected in app');
 });
 
-// DB settings
 ipcMain.handle('get-db-settings', () => {
   return store.get('db');
 });
 
 ipcMain.handle('save-db-settings', async (_event, settings) => {
   store.set('db', settings);
-  // Close existing connection so next query uses new settings
   if (dbConnection) {
     await dbConnection.end().catch(() => {});
     dbConnection = null;
@@ -409,7 +496,6 @@ let currentWatcher: fs.FSWatcher | null = null;
 
 function initScriptWatcher() {
   const dir = getScriptsDir();
-  // Cleanup previous watcher
   if (currentWatcher) { currentWatcher.close(); currentWatcher = null; }
   knownScripts.clear();
   watcherReady = false;
@@ -452,7 +538,7 @@ app.setAppUserModelId('com.woizzer.mcp-sql-proxy');
 
 app.whenReady().then(() => {
   createWindow();
-  connectToMcp();
+  startWebSocketServer();
   initScriptWatcher();
   initTelegram();
 });
