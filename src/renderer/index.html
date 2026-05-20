@@ -210,8 +210,9 @@
             <textarea id="manual-query-editor" class="query-editor w-full bg-gray-900 text-green-400 p-4 outline-none resize-y" rows="6" spellcheck="false" placeholder="SQL Query hier eingeben..."></textarea>
           </div>
           <div class="flex gap-2 px-4 py-2 bg-gray-800 border-b border-gray-700">
-            <button onclick="executeManualQuery()" class="px-4 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm font-medium">Execute</button>
+            <button id="manual-execute-btn" onclick="executeManualQuery()" class="px-4 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm font-medium">Execute</button>
             <button onclick="resetManual()" class="px-4 py-1.5 bg-gray-600 hover:bg-gray-500 rounded text-sm font-medium">Reset</button>
+            <button id="manual-cancel-btn" onclick="cancelManualQuery()" class="hidden px-4 py-1.5 bg-orange-600 hover:bg-orange-500 rounded text-sm font-medium">Cancel</button>
             <span id="manual-query-status" class="text-sm text-gray-400 self-center ml-2"></span>
           </div>
           <!-- Manual Results -->
@@ -245,8 +246,9 @@
 
           <!-- Action Buttons -->
           <div class="flex gap-2 px-4 py-2 bg-gray-800 border-b border-gray-700">
-            <button onclick="approveCurrentQuery()" class="px-4 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm font-medium">Execute</button>
-            <button onclick="rejectCurrentQuery()" class="px-4 py-1.5 bg-red-600 hover:bg-red-500 rounded text-sm font-medium">Reject</button>
+            <button id="execute-btn" onclick="approveCurrentQuery()" class="px-4 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm font-medium">Execute</button>
+            <button id="reject-btn" onclick="rejectCurrentQuery()" class="px-4 py-1.5 bg-red-600 hover:bg-red-500 rounded text-sm font-medium">Reject</button>
+            <button id="cancel-btn" onclick="cancelCurrentQuery()" class="hidden px-4 py-1.5 bg-orange-600 hover:bg-orange-500 rounded text-sm font-medium">Cancel</button>
             <span id="query-status" class="text-sm text-gray-400 self-center ml-2"></span>
           </div>
 
@@ -567,25 +569,54 @@
       renderQueryList();
     }
 
+    function setApproveExecuting(executing) {
+      document.getElementById('execute-btn').classList.toggle('hidden', executing);
+      document.getElementById('reject-btn').classList.toggle('hidden', executing);
+      document.getElementById('cancel-btn').classList.toggle('hidden', !executing);
+    }
+
     async function approveCurrentQuery() {
       if (!currentQuery) return;
 
       const query = document.getElementById('query-editor').value;
       document.getElementById('query-status').textContent = 'Executing...';
+      setApproveExecuting(true);
 
-      const result = await window.api.approveQuery(currentQuery.id, query);
+      try {
+        const result = await window.api.approveQuery(currentQuery.id, query);
 
-      if (result.success) {
-        currentResult = result.data;
-        currentError = null;
-        renderResults();
-        document.getElementById('query-status').textContent = 'Done - review results before sending';
-      } else {
-        currentError = result.error;
-        currentResult = null;
-        document.getElementById('error-area').classList.remove('hidden');
-        document.getElementById('error-message').textContent = result.error;
-        document.getElementById('query-status').textContent = 'Error';
+        if (result.success) {
+          currentResult = result.data;
+          currentError = null;
+          renderResults();
+          document.getElementById('query-status').textContent = 'Done - review results before sending';
+        } else {
+          currentError = result.error;
+          currentResult = null;
+          document.getElementById('error-area').classList.remove('hidden');
+          document.getElementById('error-message').textContent = result.error;
+          document.getElementById('query-status').textContent = 'Error';
+        }
+      } finally {
+        setApproveExecuting(false);
+      }
+    }
+
+    async function cancelCurrentQuery() {
+      if (!currentQuery) return;
+      const btn = document.getElementById('cancel-btn');
+      btn.disabled = true;
+      btn.textContent = 'Cancelling...';
+      try {
+        const res = await window.api.cancelQuery(currentQuery.id);
+        if (!res.success) {
+          document.getElementById('query-status').textContent = 'Cancel failed: ' + res.error;
+        } else {
+          document.getElementById('query-status').textContent = 'Cancelled';
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Cancel';
       }
     }
 
@@ -840,6 +871,11 @@
       updateDangerMode();
     }
 
+    function setManualExecuting(executing) {
+      document.getElementById('manual-execute-btn').classList.toggle('hidden', executing);
+      document.getElementById('manual-cancel-btn').classList.toggle('hidden', !executing);
+    }
+
     async function executeManualQuery() {
       const query = document.getElementById('manual-query-editor').value.trim();
       if (!query) return;
@@ -850,20 +886,42 @@
       deselectedRows = new Set();
       editedCells = {};
       removedColumns = new Set();
+      setManualExecuting(true);
 
-      const result = await window.api.approveQuery('manual', query);
+      try {
+        const result = await window.api.approveQuery('manual', query);
 
-      if (result.success) {
-        manualResult = result.data;
-        renderManualResults();
-        document.getElementById('manual-query-status').textContent = 'Done';
-        addToHistory({ query }, 'manual');
-      } else {
-        manualResult = null;
-        document.getElementById('manual-error-area').classList.remove('hidden');
-        document.getElementById('manual-error-message').textContent = result.error;
-        document.getElementById('manual-query-status').textContent = 'Error';
-        addToHistory({ query }, 'error');
+        if (result.success) {
+          manualResult = result.data;
+          renderManualResults();
+          document.getElementById('manual-query-status').textContent = 'Done';
+          addToHistory({ query }, 'manual');
+        } else {
+          manualResult = null;
+          document.getElementById('manual-error-area').classList.remove('hidden');
+          document.getElementById('manual-error-message').textContent = result.error;
+          document.getElementById('manual-query-status').textContent = 'Error';
+          addToHistory({ query }, 'error');
+        }
+      } finally {
+        setManualExecuting(false);
+      }
+    }
+
+    async function cancelManualQuery() {
+      const btn = document.getElementById('manual-cancel-btn');
+      btn.disabled = true;
+      btn.textContent = 'Cancelling...';
+      try {
+        const res = await window.api.cancelQuery('manual');
+        if (!res.success) {
+          document.getElementById('manual-query-status').textContent = 'Cancel failed: ' + res.error;
+        } else {
+          document.getElementById('manual-query-status').textContent = 'Cancelled';
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Cancel';
       }
     }
 

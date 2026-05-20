@@ -19,9 +19,33 @@ const store = new Store({
   },
 });
 
+// Single-instance lock — prevents multiple Electron windows when several MCP processes race to spawn one.
+// If another instance already has the lock, we exit immediately before any window or server is created
+// (process.exit is synchronous — app.quit would be async and could let a window briefly flash on screen).
+// This also prevents the EADDRINUSE error popup that used to appear when 2nd+ instances tried port 52345.
+if (!app.requestSingleInstanceLock()) {
+  process.exit(0);
+}
+
+// Last-resort safety net: if anything ever still throws EADDRINUSE, swallow it silently
+// instead of letting Electron's default crash dialog pop up.
+process.on('uncaughtException', (err: any) => {
+  if (err && err.code === 'EADDRINUSE') {
+    process.stderr.write(`[MCP] Port ${WS_PORT} already in use — exiting silently.\n`);
+    app.exit(0);
+    return;
+  }
+  process.stderr.write(`[MCP] Uncaught exception: ${err?.message || err}\n`);
+});
+
+const WS_PORT = 52345;
+
 let mainWindow: BrowserWindow | null = null;
 let dbConnection: mysql.Connection | null = null;
 let scriptsDirOverride: string = '';
+
+// Tracks running queries -> MySQL thread id, so we can KILL QUERY <id> from a separate connection.
+const runningQueries = new Map<string, number>();
 
 // --- Multi-client tracking ---
 // Maps query ID to the WebSocket client that sent it, so results go back to the right MCP process
@@ -65,7 +89,7 @@ function initTelegram() {
       if (action === 'approve') {
         telegramBot?.answerCallbackQuery(callbackQuery.id, { text: 'Executing...' });
         try {
-          const result = await executeQuery(pending.query);
+          const result = await executeQuery(pending.query, pending.id);
           // Send result back to the correct MCP client
           if (client && client.readyState === WebSocket.OPEN) {
             ws_sendResult(client, pending.id, result);
@@ -252,27 +276,58 @@ async function getDbConnection(): Promise<mysql.Connection> {
   return dbConnection;
 }
 
-async function executeQuery(query: string): Promise<any> {
+async function executeQuery(query: string, queryId?: string): Promise<any> {
   const conn = await getDbConnection();
-  const [rows] = await conn.query(query);
+  if (queryId) runningQueries.set(queryId, (conn as any).threadId);
+  try {
+    const [rows] = await conn.query(query);
 
-  if (Array.isArray(rows) && rows.length > 0 && Array.isArray(rows[0])) {
-    const resultSets: any[][] = [];
-    for (const rs of rows as any[]) {
-      if (Array.isArray(rs) && rs.length > 0 && typeof rs[0] === 'object' && !Array.isArray(rs[0])) {
-        resultSets.push(rs);
+    if (Array.isArray(rows) && rows.length > 0 && Array.isArray(rows[0])) {
+      const resultSets: any[][] = [];
+      for (const rs of rows as any[]) {
+        if (Array.isArray(rs) && rs.length > 0 && typeof rs[0] === 'object' && !Array.isArray(rs[0])) {
+          resultSets.push(rs);
+        }
       }
+      if (resultSets.length === 1) return resultSets[0];
+      if (resultSets.length > 1) return { _multipleResultSets: true, resultSets };
+      return rows[0];
     }
-    if (resultSets.length === 1) return resultSets[0];
-    if (resultSets.length > 1) return { _multipleResultSets: true, resultSets };
-    return rows[0];
+
+    return rows;
+  } finally {
+    if (queryId) runningQueries.delete(queryId);
+  }
+}
+
+// Cancel a running query by issuing KILL QUERY on a separate admin connection.
+// KILL QUERY <threadId> aborts only the running statement, the connection stays alive.
+async function cancelRunningQuery(queryId: string): Promise<{ success: boolean; error?: string }> {
+  const threadId = runningQueries.get(queryId);
+  if (!threadId) {
+    return { success: false, error: 'Query not currently running (or already finished).' };
   }
 
-  return rows;
+  const dbConfig = store.get('db') as any;
+  let killConn: mysql.Connection | null = null;
+  try {
+    killConn = await mysql.createConnection({
+      host: dbConfig.host,
+      port: dbConfig.port,
+      user: dbConfig.user,
+      password: dbConfig.password,
+      database: dbConfig.database,
+    });
+    await killConn.query(`KILL QUERY ${threadId}`);
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  } finally {
+    if (killConn) await killConn.end().catch(() => {});
+  }
 }
 
 // --- WebSocket Server (accepts connections from MCP processes) ---
-const WS_PORT = 52345;
 
 function startWebSocketServer() {
   // HTTP server for health check + WebSocket upgrade
@@ -351,17 +406,18 @@ function startWebSocketServer() {
     });
   });
 
-  httpServer.listen(WS_PORT, '127.0.0.1', () => {
-    process.stderr.write(`[MCP] WebSocket server listening on port ${WS_PORT}\n`);
-  });
-
+  // Bind error handler BEFORE listen() so EADDRINUSE is caught silently — no Electron crash dialog.
   httpServer.on('error', (err: any) => {
     if (err.code === 'EADDRINUSE') {
       process.stderr.write(`[MCP] Port ${WS_PORT} already in use — another Electron instance is probably running. Exiting.\n`);
-      app.quit();
+      app.exit(0);
     } else {
       process.stderr.write(`[MCP] HTTP server error: ${err.message}\n`);
     }
+  });
+
+  httpServer.listen(WS_PORT, '127.0.0.1', () => {
+    process.stderr.write(`[MCP] WebSocket server listening on port ${WS_PORT}\n`);
   });
 }
 
@@ -369,11 +425,15 @@ function startWebSocketServer() {
 
 ipcMain.handle('approve-query', async (_event, { id, query }) => {
   try {
-    const result = await executeQuery(query);
+    const result = await executeQuery(query, id);
     return { success: true, data: result };
   } catch (e: any) {
     return { success: false, error: e.message };
   }
+});
+
+ipcMain.handle('cancel-query', async (_event, { id }) => {
+  return await cancelRunningQuery(id);
 });
 
 ipcMain.on('send-result', (_event, { id, data }) => {
@@ -535,6 +595,16 @@ function initScriptWatcher() {
 
 // --- App lifecycle ---
 app.setAppUserModelId('com.woizzer.mcp-sql-proxy');
+
+// When someone tries to launch a second instance (double-click app, MCP race, etc.),
+// the OS routes the event to the already-running instance — focus the existing window.
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
 
 app.whenReady().then(() => {
   createWindow();

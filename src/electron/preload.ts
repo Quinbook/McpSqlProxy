@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('new-query', (_event, query) => callback(query));
   },
   approveQuery: (id: string, query: string) => ipcRenderer.invoke('approve-query', { id, query }),
+  cancelQuery: (id: string) => ipcRenderer.invoke('cancel-query', { id }),
   sendResult: (id: string, data: any) => ipcRenderer.send('send-result', { id, data }),
   sendError: (id: string, error: string) => ipcRenderer.send('send-error', { id, error }),
   rejectQuery: (id: string, reason: string) => ipcRenderer.send('reject-query', { id, reason }),
