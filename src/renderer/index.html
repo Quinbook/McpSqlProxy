@@ -142,6 +142,25 @@
           <input id="tg-chatid" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" placeholder="-1001234567890" />
         </div>
       </div>
+      <h2 class="text-sm font-semibold mb-3 mt-4">Remote Access (Tailscale)</h2>
+      <div class="flex items-center gap-3 mb-2">
+        <label class="text-xs text-gray-400">Enabled</label>
+        <input id="rm-enabled" type="checkbox" class="w-4 h-4" />
+        <span id="rm-status" class="text-xs px-2 py-0.5 rounded-full bg-gray-600">127.0.0.1 only</span>
+      </div>
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="text-xs text-gray-400">Bind Host (0.0.0.0 or Tailscale IP)</label>
+          <input id="rm-bindhost" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none" placeholder="0.0.0.0" />
+        </div>
+        <div class="col-span-2">
+          <label class="text-xs text-gray-400">Shared Token (min. 16 chars) — set the same as SQLPROXY_TOKEN on the remote MCP</label>
+          <div class="flex gap-2">
+            <input id="rm-token" class="w-full bg-gray-700 text-sm rounded px-2 py-1 border border-gray-600 focus:border-blue-500 outline-none font-mono" />
+            <button onclick="generateRemoteToken()" class="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded whitespace-nowrap">Generate</button>
+          </div>
+        </div>
+      </div>
       <div class="flex gap-2 mt-3">
         <button onclick="saveSettings()" class="text-sm px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded">Save</button>
         <button onclick="testConnection()" class="text-sm px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded">Test Connection</button>
@@ -428,6 +447,12 @@
       const tgStatus = document.getElementById('tg-status');
       if (tg.enabled) { tgStatus.textContent = 'On'; tgStatus.className = 'text-xs px-2 py-0.5 rounded-full bg-green-600'; }
       else { tgStatus.textContent = 'Off'; tgStatus.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-600'; }
+      // Remote access
+      const rm = await window.api.getRemoteSettings();
+      document.getElementById('rm-enabled').checked = rm.enabled || false;
+      document.getElementById('rm-bindhost').value = rm.bindHost || '0.0.0.0';
+      document.getElementById('rm-token').value = rm.token || '';
+      updateRemoteStatus(rm.listening, rm.port);
       // Check if scripts dir is configured (via env var)
       const scriptsDir = await window.api.getScriptsDir();
       const scriptsBtn = document.getElementById('scripts-btn');
@@ -471,8 +496,38 @@
         chatId: document.getElementById('tg-chatid').value.trim(),
         enabled: document.getElementById('tg-enabled').checked,
       });
+      const rmResult = await window.api.saveRemoteSettings({
+        enabled: document.getElementById('rm-enabled').checked,
+        bindHost: document.getElementById('rm-bindhost').value.trim() || '0.0.0.0',
+        token: document.getElementById('rm-token').value.trim(),
+      });
+      if (!rmResult.success) {
+        showToast('Remote Access', rmResult.error);
+        updateDbStatus('remote error', 'bg-red-600');
+        return;
+      }
+      updateRemoteStatus(rmResult.listening, rmResult.port);
       updateDbStatus('saved', 'bg-blue-600');
     }
+
+    function updateRemoteStatus(host, port) {
+      const el = document.getElementById('rm-status');
+      if (host && host !== '127.0.0.1') {
+        el.textContent = `listening ${host}:${port}`;
+        el.className = 'text-xs px-2 py-0.5 rounded-full bg-green-600';
+      } else {
+        el.textContent = '127.0.0.1 only';
+        el.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-600';
+      }
+    }
+
+    function generateRemoteToken() {
+      const bytes = new Uint8Array(24);
+      crypto.getRandomValues(bytes);
+      document.getElementById('rm-token').value = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    window.api.onRemoteStatus((data) => updateRemoteStatus(data.bindHost, data.port));
 
     async function testConnection() {
       updateDbStatus('testing...', 'bg-yellow-600');

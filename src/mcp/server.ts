@@ -8,6 +8,15 @@ import * as http from 'http';
 
 const WS_PORT = 52345;
 
+// Target proxy. Default = local Electron app. Set SQLPROXY_WS_URL (e.g. ws://100.104.114.127:52345)
+// and SQLPROXY_TOKEN to talk to an Electron app on another machine (Tailscale). Remote targets are
+// never auto-launched.
+const WS_URL = (process.env.SQLPROXY_WS_URL || `ws://127.0.0.1:${WS_PORT}`).trim();
+const WS_TOKEN = (process.env.SQLPROXY_TOKEN || '').trim();
+const wsTarget = new URL(WS_URL);
+const IS_LOCAL_TARGET = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(wsTarget.hostname);
+const HEALTH_URL = `http://${wsTarget.host}/health`;
+
 interface PendingQuery {
   id: string;
   query: string;
@@ -27,12 +36,12 @@ let launchInProgress = false;
 // --- Check if Electron is already running ---
 function isElectronRunning(): Promise<boolean> {
   return new Promise((resolve) => {
-    const req = http.get(`http://127.0.0.1:${WS_PORT}/health`, (res) => {
+    const req = http.get(HEALTH_URL, (res) => {
       res.resume();
       resolve(res.statusCode === 200);
     });
     req.on('error', () => resolve(false));
-    req.setTimeout(500, () => { req.destroy(); resolve(false); });
+    req.setTimeout(IS_LOCAL_TARGET ? 500 : 3000, () => { req.destroy(); resolve(false); });
   });
 }
 
@@ -63,12 +72,12 @@ function connectToElectron(): Promise<void> {
       return;
     }
 
-    const ws = new WebSocket(`ws://127.0.0.1:${WS_PORT}`);
+    const ws = new WebSocket(WS_URL, WS_TOKEN ? { headers: { 'x-sqlproxy-token': WS_TOKEN } } : undefined);
 
     ws.on('open', () => {
       wsClient = ws;
       connectRetries = 0;
-      process.stderr.write('[MCP] Connected to Electron WS server\n');
+      process.stderr.write(`[MCP] Connected to Electron WS server at ${WS_URL}\n`);
 
       // Send scripts dir if already set
       if (currentScriptsDir) {
@@ -114,7 +123,7 @@ function connectToElectron(): Promise<void> {
     });
 
     ws.on('error', (err) => {
-      process.stderr.write(`[MCP] WS connect error: ${err.message}\n`);
+      process.stderr.write(`[MCP] WS connect error (${WS_URL}): ${err.message}\n`);
       wsClient = null;
       reject(err);
     });
@@ -129,6 +138,10 @@ async function ensureConnected(): Promise<void> {
   launchInProgress = true;
   try {
     const running = await isElectronRunning();
+    if (!running && !IS_LOCAL_TARGET) {
+      process.stderr.write(`[MCP] Remote proxy ${WS_URL} not reachable — not launching anything\n`);
+      return;
+    }
     if (!running) {
       launchElectron();
       // Wait for Electron to start
@@ -199,11 +212,15 @@ server.tool(
         },
       };
 
-      pendingQueries.set(id, pending);
-
-      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
-        wsClient.send(JSON.stringify({ type: 'query', id, query, description }));
+      if (!wsClient || wsClient.readyState !== WebSocket.OPEN) {
+        resolve({
+          content: [{ type: 'text', text: `Error: SQL proxy not reachable at ${WS_URL}${IS_LOCAL_TARGET ? '' : ' (is the Electron app running with remote access enabled, and the token correct?)'}` }],
+        });
+        return;
       }
+
+      pendingQueries.set(id, pending);
+      wsClient.send(JSON.stringify({ type: 'query', id, query, description }));
     });
   }
 );

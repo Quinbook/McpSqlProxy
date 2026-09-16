@@ -49,4 +49,11 @@ contextBridge.exposeInMainWorld('api', {
   getTelegramSettings: () => ipcRenderer.invoke('get-telegram-settings'),
   saveTelegramSettings: (settings: any) => ipcRenderer.invoke('save-telegram-settings', settings),
   setAppIcon: (pngDataUrl: string) => ipcRenderer.send('set-app-icon', pngDataUrl),
+
+  // Remote access (Tailscale)
+  getRemoteSettings: () => ipcRenderer.invoke('get-remote-settings'),
+  saveRemoteSettings: (settings: any) => ipcRenderer.invoke('save-remote-settings', settings),
+  onRemoteStatus: (callback: (data: { bindHost: string; port: number }) => void) => {
+    ipcRenderer.on('remote-status', (_event, data) => callback(data));
+  },
 });

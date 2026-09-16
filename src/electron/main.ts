@@ -40,6 +40,34 @@ process.on('uncaughtException', (err: any) => {
 
 const WS_PORT = 52345;
 
+// --- Remote access (Tailscale) ---
+// Default: loopback only, no token. When enabled with a token, the WS server binds to `bindHost`
+// (e.g. 0.0.0.0 or the Tailscale IP) and every non-loopback client must present the token.
+interface RemoteSettings { enabled: boolean; bindHost: string; token: string }
+
+function getRemoteSettings(): RemoteSettings {
+  return {
+    enabled: (store.get('remote.enabled') as boolean) || false,
+    bindHost: ((store.get('remote.bindHost') as string) || process.env.SQLPROXY_BIND_HOST || '0.0.0.0').trim(),
+    token: ((store.get('remote.token') as string) || process.env.SQLPROXY_TOKEN || '').trim(),
+  };
+}
+
+function isLoopbackAddress(addr: string | undefined): boolean {
+  if (!addr) return false;
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr.startsWith('127.');
+}
+
+// Effective listen host — never bind outside loopback without a token.
+function effectiveBindHost(): string {
+  const r = getRemoteSettings();
+  if (r.enabled && r.token.length >= 16) return r.bindHost || '0.0.0.0';
+  return '127.0.0.1';
+}
+
+let httpServer: http.Server | null = null;
+let wss: WebSocketServer | null = null;
+
 let mainWindow: BrowserWindow | null = null;
 let dbConnection: mysql.Connection | null = null;
 let scriptsDirOverride: string = '';
@@ -330,8 +358,11 @@ async function cancelRunningQuery(queryId: string): Promise<{ success: boolean; 
 // --- WebSocket Server (accepts connections from MCP processes) ---
 
 function startWebSocketServer() {
+  const remote = getRemoteSettings();
+  const bindHost = effectiveBindHost();
+
   // HTTP server for health check + WebSocket upgrade
-  const httpServer = http.createServer((req, res) => {
+  httpServer = http.createServer((req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
@@ -341,11 +372,27 @@ function startWebSocketServer() {
     }
   });
 
-  const wss = new WebSocketServer({ server: httpServer });
+  wss = new WebSocketServer({
+    server: httpServer,
+    // Loopback clients are trusted as before. Anything else must send the shared token
+    // (header x-sqlproxy-token or ?token=… in the URL).
+    verifyClient: (info, done) => {
+      const addr = info.req.socket.remoteAddress;
+      if (isLoopbackAddress(addr)) { done(true); return; }
+      const headerToken = (info.req.headers['x-sqlproxy-token'] as string | undefined) || '';
+      let urlToken = '';
+      try { urlToken = new URL(info.req.url || '/', 'http://localhost').searchParams.get('token') || ''; } catch {}
+      const presented = (headerToken || urlToken).trim();
+      const ok = remote.enabled && remote.token.length >= 16 && presented === remote.token;
+      if (!ok) process.stderr.write(`[MCP] Rejected remote client ${addr} (bad or missing token)\n`);
+      done(ok, 401, 'Unauthorized');
+    },
+  });
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
     mcpClients.add(ws);
-    process.stderr.write(`[MCP] MCP client connected (total: ${mcpClients.size})\n`);
+    const from = isLoopbackAddress(req.socket.remoteAddress) ? 'local' : `remote ${req.socket.remoteAddress}`;
+    process.stderr.write(`[MCP] MCP client connected (${from}, total: ${mcpClients.size})\n`);
     mainWindow?.webContents.send('mcp-status', 'connected');
     mainWindow?.webContents.send('mcp-client-count', mcpClients.size);
 
@@ -416,9 +463,19 @@ function startWebSocketServer() {
     }
   });
 
-  httpServer.listen(WS_PORT, '127.0.0.1', () => {
-    process.stderr.write(`[MCP] WebSocket server listening on port ${WS_PORT}\n`);
+  httpServer.listen(WS_PORT, bindHost, () => {
+    process.stderr.write(`[MCP] WebSocket server listening on ${bindHost}:${WS_PORT}${bindHost !== '127.0.0.1' ? ' (remote access enabled, token required)' : ''}\n`);
+    mainWindow?.webContents.send('remote-status', { bindHost, port: WS_PORT });
   });
+}
+
+// Restart the WS server after remote settings changed. Connected MCP clients reconnect on their own.
+function restartWebSocketServer() {
+  const finish = () => { httpServer = null; wss = null; startWebSocketServer(); };
+  if (!httpServer) { finish(); return; }
+  for (const c of mcpClients) { try { c.close(); } catch {} }
+  wss?.close();
+  httpServer.close(() => finish());
 }
 
 // --- IPC Handlers ---
@@ -538,6 +595,24 @@ ipcMain.handle('save-telegram-settings', async (_event, settings: { botToken: st
   telegramEnabled = settings.enabled;
   initTelegram();
   return true;
+});
+
+// Remote access settings
+ipcMain.handle('get-remote-settings', () => {
+  const r = getRemoteSettings();
+  return { ...r, port: WS_PORT, listening: effectiveBindHost() };
+});
+
+ipcMain.handle('save-remote-settings', async (_event, settings: { enabled: boolean; bindHost: string; token: string }) => {
+  const token = (settings.token || '').trim();
+  if (settings.enabled && token.length < 16) {
+    return { success: false, error: 'Token must be at least 16 characters' };
+  }
+  store.set('remote.enabled', !!settings.enabled);
+  store.set('remote.bindHost', (settings.bindHost || '0.0.0.0').trim());
+  store.set('remote.token', token);
+  restartWebSocketServer();
+  return { success: true, listening: effectiveBindHost(), port: WS_PORT };
 });
 
 ipcMain.on('set-app-icon', (_event, pngDataUrl: string) => {
