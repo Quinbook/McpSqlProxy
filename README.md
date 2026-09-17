@@ -71,6 +71,15 @@ via /mcp (stdio, command: node <path>/dist/mcp/server.js).
 
 After that, the Electron app launches automatically when Claude runs a query. On first launch, enter your database credentials in the Settings panel and click **Save**.
 
+### Standalone start (without Claude)
+
+The Electron app is normally launched on demand by the MCP server. If it must run on its own -- e.g. as the remote target for a Claude session on another machine (see Remote Access) -- start it directly:
+
+- `start-app.cmd` (double-click, or put a shortcut to it into the Windows Startup folder `shell:startup`)
+- or `npm run app`
+
+Both start `dist/electron/main.js` without rebuilding. The single-instance lock makes a second start just focus the existing window. Note: closing the window quits the app (and thereby the remote endpoint).
+
 ### SQL Scripts Directory (optional)
 
 If you want the built-in script browser, tell Claude where your SQL scripts live. Add this to your `CLAUDE.md` or Claude Code memory:

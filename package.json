@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc && shx cp src/renderer/index.html dist/renderer/index.html && shx cp src/renderer/icon.svg dist/renderer/icon.svg",
     "start": "npm run build && electron dist/electron/main.js",
-    "mcp": "node dist/mcp/server.js"
+    "mcp": "node dist/mcp/server.js",
+    "app": "electron dist/electron/main.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
